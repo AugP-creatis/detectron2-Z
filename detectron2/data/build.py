@@ -325,11 +325,18 @@ def build_detection_train_loader(cfg, mapper=None):
         else 0,
         proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN if cfg.MODEL.LOAD_PROPOSALS else None,
     )
-    dataset = DatasetFromList(dataset_dicts, copy=False)
+    dataset = DatasetFromList(
+        dataset_dicts,
+        cfg.DATALOADER.STACK,
+        cfg.INPUT.STACK_SIZE,
+        cfg.INPUT.EXTENSION,
+        cfg.INPUT.STACK_SEPERATOR,
+        copy=False
+    )
 
     if mapper is None:
         mapper = DatasetMapper(cfg, True)
-    dataset = MapDataset(dataset, mapper)
+    dataset = MapDataset(dataset, mapper, cfg.DATALOADER.STACK)
 
     sampler_name = cfg.DATALOADER.SAMPLER_TRAIN
     logger = logging.getLogger(__name__)

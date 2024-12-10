@@ -6,6 +6,8 @@ import pickle
 import random
 import torch.utils.data as data
 
+from natsort import natsorted
+
 from detectron2.utils.serialize import PicklableWrapper
 
 __all__ = ["MapDataset", "DatasetFromList", "AspectRatioGroupedDataset"]
@@ -23,9 +25,12 @@ class MapDataset(data.Dataset):
             elements from the dataset.
     """
 
-    def __init__(self, dataset, map_func):
+    def __init__(self, dataset, map_func, stack: bool):
         self._dataset = dataset
         self._map_func = PicklableWrapper(map_func)  # wrap so that a lambda will work
+        self._stack = stack
+        if self._stack:
+            self._stack_size = len(self._dataset[0])
 
         self._rng = random.Random(42)
         self._fallback_candidates = set(range(len(dataset)))
@@ -38,10 +43,25 @@ class MapDataset(data.Dataset):
         cur_idx = int(idx)
 
         while True:
-            data = self._map_func(self._dataset[cur_idx])
-            if data is not None:
-                self._fallback_candidates.add(cur_idx)
-                return data
+            if self._stack:
+                z_data = [None] * self._stack_size
+                map_succeed = True
+                for z in range(self._stack_size):
+                    data = self._map_func(self._dataset[cur_idx][z])
+                    if data is not None:
+                        z_data[z] = data
+                    else:
+                        map_succeed = False
+
+                if map_succeed:
+                    self._fallback_candidates.add(cur_idx)
+                    return z_data
+
+            else:
+                data = self._map_func(self._dataset[cur_idx])
+                if data is not None:
+                    self._fallback_candidates.add(cur_idx)
+                    return data
 
             # _map_func fails for this idx, use a random new index from the pool
             retry_count += 1
@@ -62,7 +82,16 @@ class DatasetFromList(data.Dataset):
     Wrap a list to a torch Dataset. It produces elements of the list as data.
     """
 
-    def __init__(self, lst: list, copy: bool = True, serialize: bool = True):
+    def __init__(
+            self, 
+            lst: list,
+            stack: bool,
+            stack_size: int = 11,
+            ext: str = ".png",
+            sep: str = "F",
+            copy: bool = True,
+            serialize: bool = True
+        ):
         """
         Args:
             lst (list): a list which contains elements to produce.
@@ -73,9 +102,62 @@ class DatasetFromList(data.Dataset):
                 enabled, data loader workers can use shared RAM from master
                 process instead of making a copy.
         """
-        self._lst = lst
         self._copy = copy
         self._serialize = serialize
+
+        logger = logging.getLogger(__name__)
+
+        if stack:
+            stacks_dict = {lst[0].get('file_name').split(sep, 1)[0] : [lst[0]]}
+            nb_img = len(lst)
+            for i in range(1, nb_img):
+                i_stack = lst[i].get('file_name').split(sep, 1)[0]
+                if i_stack in stacks_dict:
+                    stacks_dict[i_stack].append(lst[i])
+                else:
+                    stacks_dict[i_stack] = [lst[i]]
+
+                if len(stacks_dict[i_stack]) == stack_size:
+                    stacks_dict[i_stack] = natsorted(stacks_dict[i_stack], key = lambda d : d['file_name'][:-len(ext)])
+
+            # Create the list of the stacked dictionaries & verify if it is well constructed
+            z_lst = list(stacks_dict.values())
+            nb_stacks = len(z_lst)
+            logger.info("Number of stacks: {}".format(nb_stacks))
+            cnt_img = 0
+            cnt_too_big = 0
+            cnt_too_small = 0
+            for s in range(nb_stacks):
+                cnt_img += len(z_lst[s])
+                if len(z_lst[s]) == stack_size:
+                    stack_sorted = True
+                    for z in range(stack_size):
+                        if not z_lst[s][z].get('file_name').split(sep, 1)[1].startswith(str(z)):
+                            stack_sorted = False
+                    if not stack_sorted:
+                        logger.warning("Stack {} is not sorted ({})".format(s, z_lst[s][0].get('file_name').split(sep, 1)[0]))
+                elif len(z_lst[s]) > stack_size:
+                    cnt_too_big += 1
+                elif len(z_lst[s]) < stack_size:
+                    cnt_too_small +=1
+            
+            if cnt_img != nb_img:
+                logger.warning("There are {} images in total, which is not expected ({})".format(cnt_img, nb_img))
+            else:
+                logger.info("There are {} images in total".format(cnt_img))
+
+            if cnt_too_big != 0:
+                logger.warning("{} stacks have a bigger size than expected ({})".format(cnt_too_big, stack_size))
+            if cnt_too_small != 0:
+                logger.warning("{} stacks have a smaller size than expected ({})".format(cnt_too_small, stack_size))
+            if cnt_too_big == 0 and cnt_too_small == 0:
+                logger.info("All stacks have {} images".format(stack_size))
+
+            self._lst = z_lst
+        
+        else:
+             self._lst = lst
+
 
         def _serialize(data):
             buffer = pickle.dumps(data, protocol=-1)

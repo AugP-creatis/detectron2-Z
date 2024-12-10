@@ -83,6 +83,10 @@ _C.INPUT.FORMAT = "BGR"
 # Mask R-CNN supports either "polygon" or "bitmask" as ground truth.
 _C.INPUT.MASK_FORMAT = "polygon"  # alternative: "bitmask"
 
+# STACK
+_C.INPUT.STACK_SIZE = 11
+_C.INPUT.EXTENSION = ".png"
+_C.INPUT.STACK_SEPERATOR = "F"
 
 # -----------------------------------------------------------------------------
 # Dataset
@@ -120,6 +124,9 @@ _C.DATALOADER.REPEAT_THRESHOLD = 0.0
 # Tf True, when working on datasets that have instance annotations, the
 # training dataloader will filter out images without associated annotations
 _C.DATALOADER.FILTER_EMPTY_ANNOTATIONS = True
+
+# STACK
+_C.DATALOADER.STACK = True
 
 # ---------------------------------------------------------------------------- #
 # Backbone options
