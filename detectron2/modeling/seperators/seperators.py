@@ -40,7 +40,8 @@ class ConvSeperator(nn.Module):
                 self.feature_channels[f],
                 self.feature_channels[f] * self._stack_size,
                 kernel_size=1,
-                stride=1
+                stride=1,
+                bias=False
             )
             for f in self.in_features
         ])
@@ -52,11 +53,43 @@ class ConvSeperator(nn.Module):
             z_features[i] = torch.split(self.sep_convs[i](features[f]), self.feature_channels[f], dim = 1)  #Will be a tuple containing stack_size tensors
 
         #Gather results
-        z_results = [[None] * len(self.in_features)] * self._stack_size
+        z_results = [[None] * len(self.in_features) for z in range(self._stack_size)]
         for z in range(self._stack_size):
             for i in range(len(self.in_features)):
                 z_results[z][i] = z_features[i][z]
             assert len(self._out_features) == len(z_results[z])
 
         return [dict(zip(self._out_features, z_results[z])) for z in range(self._stack_size)] #inspired by detectron2 fpn.py
-        
+
+
+@SEPERATOR_REGISTRY.register()
+class SharedConvSeperator(nn.Module):
+    def __init__(self, cfg, input_shape: Dict[str, ShapeSpec]):
+        super().__init__()
+        self._stack_size = cfg.INPUT.STACK_SIZE
+        self.in_features = list(input_shape.keys())
+        self.in_channels = input_shape[self.in_features[0]].channels
+        self._out_features = self.in_features
+
+        self.sep_conv = nn.Conv2d(
+            self.in_channels,
+            self.in_channels * self._stack_size,
+            kernel_size=1,
+            stride=1,
+            bias=False
+        )
+
+    def forward(self, features):
+        #Seperate by convolution
+        z_features = [None] * len(self.in_features)
+        for i, f in enumerate(self.in_features):    #inspired by adet condinst mask_branch.py
+            z_features[i] = torch.split(self.sep_conv(features[f]), self.in_channels, dim = 1)  #Will be a tuple containing stack_size tensors
+
+        #Gather results
+        z_results = [[None] * len(self.in_features) for z in range(self._stack_size)]
+        for z in range(self._stack_size):
+            for i in range(len(self.in_features)):
+                z_results[z][i] = z_features[i][z]
+            assert len(self._out_features) == len(z_results[z])
+
+        return [dict(zip(self._out_features, z_results[z])) for z in range(self._stack_size)] #inspired by detectron2 fpn.py

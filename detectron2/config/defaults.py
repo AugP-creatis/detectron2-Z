@@ -161,7 +161,7 @@ _C.MODEL.FPN.FUSE_TYPE = "sum"
 # Seperator options
 # ---------------------------------------------------------------------------- #
 _C.MODEL.SEPERATOR = CN()
-_C.MODEL.SEPERATOR.NAME = "ConvSeperator"
+_C.MODEL.SEPERATOR.NAME = "SharedConvSeperator"
 
 # ---------------------------------------------------------------------------- #
 # Proposal generator options
