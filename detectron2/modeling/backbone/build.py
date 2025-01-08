@@ -25,7 +25,7 @@ def build_backbone(cfg, input_shape=None):
         an instance of :class:`Backbone`
     """
     if input_shape is None:
-        if cfg.DATALOADER.STACK:
+        if cfg.DATALOADER.IS_STACK:
             input_shape = ShapeSpec(stack_size=cfg.INPUT.STACK_SIZE, channels=len(cfg.MODEL.PIXEL_MEAN))
         else:
             input_shape = ShapeSpec(channels=len(cfg.MODEL.PIXEL_MEAN))

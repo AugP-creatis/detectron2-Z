@@ -327,7 +327,7 @@ def build_detection_train_loader(cfg, mapper=None):
     )
     dataset = DatasetFromList(
         dataset_dicts,
-        cfg.DATALOADER.STACK,
+        cfg.DATALOADER.IS_STACK,
         cfg.INPUT.STACK_SIZE,
         cfg.INPUT.EXTENSION,
         cfg.INPUT.STACK_SEPERATOR,
@@ -336,7 +336,7 @@ def build_detection_train_loader(cfg, mapper=None):
 
     if mapper is None:
         mapper = DatasetMapper(cfg, True)
-    dataset = MapDataset(dataset, mapper, cfg.DATALOADER.STACK)
+    dataset = MapDataset(dataset, mapper, cfg.DATALOADER.IS_STACK)
 
     sampler_name = cfg.DATALOADER.SAMPLER_TRAIN
     logger = logging.getLogger(__name__)
@@ -387,10 +387,17 @@ def build_detection_test_loader(cfg, dataset_name, mapper=None):
         else None,
     )
 
-    dataset = DatasetFromList(dataset_dicts)
+    dataset = DatasetFromList(
+        dataset_dicts,
+        cfg.DATALOADER.IS_STACK,
+        cfg.INPUT.STACK_SIZE,
+        cfg.INPUT.EXTENSION,
+        cfg.INPUT.STACK_SEPERATOR,
+        copy=False
+    )
     if mapper is None:
         mapper = DatasetMapper(cfg, False)
-    dataset = MapDataset(dataset, mapper)
+    dataset = MapDataset(dataset, mapper, cfg.DATALOADER.IS_STACK)
 
     sampler = InferenceSampler(len(dataset))
     # Always use 1 image per worker during inference since this is the

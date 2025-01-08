@@ -6,6 +6,7 @@ import pickle
 import random
 import torch.utils.data as data
 
+from os.path import basename
 from natsort import natsorted
 
 from detectron2.utils.serialize import PicklableWrapper
@@ -25,11 +26,11 @@ class MapDataset(data.Dataset):
             elements from the dataset.
     """
 
-    def __init__(self, dataset, map_func, stack: bool):
+    def __init__(self, dataset, map_func, is_stack: bool):
         self._dataset = dataset
         self._map_func = PicklableWrapper(map_func)  # wrap so that a lambda will work
-        self._stack = stack
-        if self._stack:
+        self._is_stack = is_stack
+        if self._is_stack:
             self._stack_size = len(self._dataset[0])
 
         self._rng = random.Random(42)
@@ -43,7 +44,7 @@ class MapDataset(data.Dataset):
         cur_idx = int(idx)
 
         while True:
-            if self._stack:
+            if self._is_stack:
                 z_data = [None] * self._stack_size
                 map_succeed = True
                 for z in range(self._stack_size):
@@ -85,7 +86,7 @@ class DatasetFromList(data.Dataset):
     def __init__(
             self, 
             lst: list,
-            stack: bool,
+            is_stack: bool,
             stack_size: int = 11,
             ext: str = ".png",
             sep: str = "F",
@@ -107,18 +108,18 @@ class DatasetFromList(data.Dataset):
 
         logger = logging.getLogger(__name__)
 
-        if stack:
-            stacks_dict = {lst[0].get('file_name').split(sep, 1)[0] : [lst[0]]}
+        if is_stack:
+            stacks_dict = {basename(lst[0]['file_name']).split(sep, 1)[0] : [lst[0]]}
             nb_img = len(lst)
             for i in range(1, nb_img):
-                i_stack = lst[i].get('file_name').split(sep, 1)[0]
+                i_stack = basename(lst[i]['file_name']).split(sep, 1)[0]
                 if i_stack in stacks_dict:
                     stacks_dict[i_stack].append(lst[i])
                 else:
                     stacks_dict[i_stack] = [lst[i]]
 
                 if len(stacks_dict[i_stack]) == stack_size:
-                    stacks_dict[i_stack] = natsorted(stacks_dict[i_stack], key = lambda d : d['file_name'][:-len(ext)])
+                    stacks_dict[i_stack] = natsorted(stacks_dict[i_stack], key = lambda d : basename(d['file_name'])[:-len(ext)])
 
             # Create the list of the stacked dictionaries & verify if it is well constructed
             z_lst = list(stacks_dict.values())
@@ -132,10 +133,10 @@ class DatasetFromList(data.Dataset):
                 if len(z_lst[s]) == stack_size:
                     stack_sorted = True
                     for z in range(stack_size):
-                        if not z_lst[s][z].get('file_name').split(sep, 1)[1].startswith(str(z)):
+                        if basename(z_lst[s][z]['file_name']).split(sep, 1)[1][:-len(ext)] != str(z):
                             stack_sorted = False
                     if not stack_sorted:
-                        logger.warning("Stack {} is not sorted ({})".format(s, z_lst[s][0].get('file_name').split(sep, 1)[0]))
+                        logger.warning("Stack {} is not sorted ({})".format(s, basename(z_lst[s][0]['file_name']).split(sep, 1)[0]))
                 elif len(z_lst[s]) > stack_size:
                     cnt_too_big += 1
                 elif len(z_lst[s]) < stack_size:

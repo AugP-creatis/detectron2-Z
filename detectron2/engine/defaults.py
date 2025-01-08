@@ -179,6 +179,7 @@ class DefaultPredictor:
 
     def __init__(self, cfg):
         self.cfg = cfg.clone()  # cfg can be modified by model
+        self._is_stack = cfg.DATALOADER.IS_STACK
         self.model = build_model(self.cfg)
         self.model.eval()
         self.metadata = MetadataCatalog.get(cfg.DATASETS.TEST[0])
@@ -193,10 +194,11 @@ class DefaultPredictor:
         self.input_format = cfg.INPUT.FORMAT
         assert self.input_format in ["RGB", "BGR"], self.input_format
 
-    def __call__(self, original_image):
+    def __call__(self, original_input):
         """
         Args:
-            original_image (np.ndarray): an image of shape (H, W, C) (in BGR order).
+            original_input (np.ndarray | list[np.ndarray]):
+                an image, or a stack of images, of shape (H, W, C) (in BGR order).
 
         Returns:
             predictions (dict):
@@ -204,15 +206,31 @@ class DefaultPredictor:
                 See :doc:`/tutorials/models` for details about the format.
         """
         with torch.no_grad():  # https://github.com/sphinx-doc/sphinx/issues/4258
-            # Apply pre-processing to image.
-            if self.input_format == "RGB":
-                # whether the model expects BGR inputs or RGB
-                original_image = original_image[:, :, ::-1]
-            height, width = original_image.shape[:2]
-            image = self.aug.get_transform(original_image).apply_image(original_image)
-            image = torch.as_tensor(image.astype("float32").transpose(2, 0, 1))
+            if self._is_stack:
+                stack_size = len(original_input)
+                inputs = [None] * stack_size
 
-            inputs = {"image": image, "height": height, "width": width}
+                for z in range(stack_size):
+                    # Apply pre-processing to image.
+                    if self.input_format == "RGB":
+                        # whether the model expects BGR inputs or RGB
+                        original_input[z] = original_input[z][:, :, ::-1]
+                    height, width = original_input[z].shape[:2]
+                    image = self.aug.get_transform(original_input[z]).apply_image(original_input[z])
+                    image = torch.as_tensor(image.astype("float32").transpose(2, 0, 1))
+
+                    inputs[z] = {"image": image, "height": height, "width": width}
+            else:
+                # Apply pre-processing to image.
+                if self.input_format == "RGB":
+                    # whether the model expects BGR inputs or RGB
+                    original_input = original_input[:, :, ::-1]
+                height, width = original_input.shape[:2]
+                image = self.aug.get_transform(original_input).apply_image(original_input)
+                image = torch.as_tensor(image.astype("float32").transpose(2, 0, 1))
+
+                inputs = {"image": image, "height": height, "width": width}
+
             predictions = self.model([inputs])[0]
             return predictions
 
