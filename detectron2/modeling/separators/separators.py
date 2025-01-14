@@ -6,9 +6,9 @@ import torch.nn.functional as F
 from detectron2.layers import ShapeSpec
 from detectron2.utils.registry import Registry
 
-SEPERATOR_REGISTRY = Registry("SEPERATOR")
-SEPERATOR_REGISTRY.__doc__ = """
-Registry for seperators, which seperate the feature maps from the backbone to a list of feature maps
+SEPARATOR_REGISTRY = Registry("SEPARATOR")
+SEPARATOR_REGISTRY.__doc__ = """
+Registry for separators, which separate the feature maps from the backbone to a list of feature maps
 The list length is equal to the number of images in a stack
 
 The registered object must be a callable that accepts two arguments:
@@ -18,16 +18,16 @@ The registered object must be a callable that accepts two arguments:
 """
 
 
-def build_seperator(cfg, input_shape=None):
+def build_separator(cfg, input_shape=None):
     """
-    Build an seperator defined by `cfg.MODEL.SEPERATOR.NAME`.
+    Build an separator defined by `cfg.MODEL.SEPARATOR.NAME`.
     """
-    seperator_name = cfg.MODEL.SEPERATOR.NAME
-    return SEPERATOR_REGISTRY.get(seperator_name)(cfg, input_shape)
+    separator_name = cfg.MODEL.SEPARATOR.NAME
+    return SEPARATOR_REGISTRY.get(separator_name)(cfg, input_shape)
 
 
-@SEPERATOR_REGISTRY.register()
-class ConvSeperator(nn.Module):
+@SEPARATOR_REGISTRY.register()
+class ConvSeparator(nn.Module):
     def __init__(self, cfg, input_shape: Dict[str, ShapeSpec]):
         super().__init__()
         self._stack_size = cfg.INPUT.STACK_SIZE
@@ -47,7 +47,7 @@ class ConvSeperator(nn.Module):
         ])
 
     def forward(self, features):
-        #Seperate by convolution
+        #Separate by convolution
         z_features = [None] * len(self.in_features)
         for i, f in enumerate(self.in_features):    #inspired by adet condinst mask_branch.py
             z_features[i] = torch.split(self.sep_convs[i](features[f]), self.feature_channels[f], dim = 1)  #Will be a tuple containing stack_size tensors
@@ -62,8 +62,8 @@ class ConvSeperator(nn.Module):
         return [dict(zip(self._out_features, z_results[z])) for z in range(self._stack_size)] #inspired by detectron2 fpn.py
 
 
-@SEPERATOR_REGISTRY.register()
-class SharedConvSeperator(nn.Module):
+@SEPARATOR_REGISTRY.register()
+class SharedConvSeparator(nn.Module):
     def __init__(self, cfg, input_shape: Dict[str, ShapeSpec]):
         super().__init__()
         self._stack_size = cfg.INPUT.STACK_SIZE
@@ -80,7 +80,7 @@ class SharedConvSeperator(nn.Module):
         )
 
     def forward(self, features):
-        #Seperate by convolution
+        #Separate by convolution
         z_features = [None] * len(self.in_features)
         for i, f in enumerate(self.in_features):    #inspired by adet condinst mask_branch.py
             z_features[i] = torch.split(self.sep_conv(features[f]), self.in_channels, dim = 1)  #Will be a tuple containing stack_size tensors
@@ -91,5 +91,22 @@ class SharedConvSeperator(nn.Module):
             for i in range(len(self.in_features)):
                 z_results[z][i] = z_features[i][z]
             assert len(self._out_features) == len(z_results[z])
+
+        return [dict(zip(self._out_features, z_results[z])) for z in range(self._stack_size)] #inspired by detectron2 fpn.py
+
+
+@SEPARATOR_REGISTRY.register()
+class From3dTo2d(nn.Module):
+    def __init__(self, cfg, input_shape: Dict[str, ShapeSpec]):
+        super().__init__()
+        self._stack_size = cfg.INPUT.STACK_SIZE
+        self.in_features = list(input_shape.keys())
+        self._out_features = self.in_features
+
+    def forward(self, features):
+        z_results = [[None] * len(self.in_features) for z in range(self._stack_size)]
+        for i, f in enumerate(self.in_features):
+            for z in range(self._stack_size):
+                z_results[z][i] = features[f][:, :, z, :, :]
 
         return [dict(zip(self._out_features, z_results[z])) for z in range(self._stack_size)] #inspired by detectron2 fpn.py

@@ -3,7 +3,7 @@ import fvcore.nn.weight_init as weight_init
 import torch
 import torch.nn.functional as F
 
-from detectron2.layers import Conv2d, FrozenBatchNorm2d, get_norm
+from detectron2.layers import Conv2d, FrozenBatchNorm, get_norm
 from detectron2.modeling import BACKBONE_REGISTRY, ResNet, ResNetBlockBase, make_stage
 from detectron2.modeling.backbone.resnet import BasicStem, BottleneckBlock, DeformBottleneckBlock
 
@@ -21,7 +21,7 @@ class TridentBottleneckBlock(ResNetBlockBase):
         bottleneck_channels,
         stride=1,
         num_groups=1,
-        norm="BN",
+        norm="BN2d",
         stride_in_1x1=False,
         num_branch=3,
         dilations=(1, 2, 3),
@@ -148,7 +148,7 @@ def build_trident_resnet_backbone(cfg, input_shape):
     if freeze_at >= 1:
         for p in stem.parameters():
             p.requires_grad = False
-        stem = FrozenBatchNorm2d.convert_frozen_batchnorm(stem)
+        stem = FrozenBatchNorm.convert_frozen_batchnorm(stem)
 
     # fmt: off
     out_features         = cfg.MODEL.RESNETS.OUT_FEATURES

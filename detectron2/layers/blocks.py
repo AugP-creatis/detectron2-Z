@@ -3,7 +3,7 @@
 
 from torch import nn
 
-from .batch_norm import FrozenBatchNorm2d
+from .batch_norm import FrozenBatchNorm
 
 
 class CNNBlockBase(nn.Module):
@@ -44,5 +44,5 @@ class CNNBlockBase(nn.Module):
         """
         for p in self.parameters():
             p.requires_grad = False
-        FrozenBatchNorm2d.convert_frozen_batchnorm(self)
+        FrozenBatchNorm.convert_frozen_batchnorm(self)
         return self

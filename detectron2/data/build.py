@@ -330,7 +330,7 @@ def build_detection_train_loader(cfg, mapper=None):
         cfg.DATALOADER.IS_STACK,
         cfg.INPUT.STACK_SIZE,
         cfg.INPUT.EXTENSION,
-        cfg.INPUT.STACK_SEPERATOR,
+        cfg.INPUT.SLICE_SEPARATOR,
         copy=False
     )
 
@@ -392,7 +392,7 @@ def build_detection_test_loader(cfg, dataset_name, mapper=None):
         cfg.DATALOADER.IS_STACK,
         cfg.INPUT.STACK_SIZE,
         cfg.INPUT.EXTENSION,
-        cfg.INPUT.STACK_SEPERATOR,
+        cfg.INPUT.SLICE_SEPARATOR,
         copy=False
     )
     if mapper is None:

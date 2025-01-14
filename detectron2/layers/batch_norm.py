@@ -8,12 +8,12 @@ from torch.nn import functional as F
 
 from detectron2.utils import comm, env
 
-from .wrappers import BatchNorm2d
+from .wrappers import BatchNorm2d, BatchNorm3d
 
 
-class FrozenBatchNorm2d(nn.Module):
+class FrozenBatchNorm(nn.Module):
     """
-    BatchNorm2d where the batch statistics and the affine parameters are fixed.
+    BatchNorm2d/3d where the batch statistics and the affine parameters are fixed.
 
     It contains non-trainable buffers called
     "weight" and "bias", "running_mean", "running_var",
@@ -48,8 +48,15 @@ class FrozenBatchNorm2d(nn.Module):
             # because its backward op computes gradients for weight/bias as well.
             scale = self.weight * (self.running_var + self.eps).rsqrt()
             bias = self.bias - self.running_mean * scale
-            scale = scale.reshape(1, -1, 1, 1)
-            bias = bias.reshape(1, -1, 1, 1)
+
+            image_dim = x.dim() - 2
+            shape = {
+                2: (1, -1, 1, 1),
+                3: (1, -1, 1, 1, 1),
+            }[image_dim]
+            scale = scale.reshape(shape)
+            bias = bias.reshape(shape)
+
             return x * scale + bias
         else:
             # When gradients are not needed, F.batch_norm is a single fused op
@@ -88,7 +95,7 @@ class FrozenBatchNorm2d(nn.Module):
         )
 
     def __repr__(self):
-        return "FrozenBatchNorm2d(num_features={}, eps={})".format(self.num_features, self.eps)
+        return "FrozenBatchNorm(num_features={}, eps={})".format(self.num_features, self.eps)
 
     @classmethod
     def convert_frozen_batchnorm(cls, module):
@@ -106,7 +113,7 @@ class FrozenBatchNorm2d(nn.Module):
         https://github.com/pytorch/pytorch/blob/master/torch/nn/modules/batchnorm.py
         """
         bn_module = nn.modules.batchnorm
-        bn_module = (bn_module.BatchNorm2d, bn_module.SyncBatchNorm)
+        bn_module = (bn_module.BatchNorm2d, bn_module.BatchNorm3d, bn_module.SyncBatchNorm)
         res = module
         if isinstance(module, bn_module):
             res = cls(module.num_features)
@@ -138,14 +145,17 @@ def get_norm(norm, out_channels):
         if len(norm) == 0:
             return None
         norm = {
-            "BN": BatchNorm2d,
+            "BN2d": BatchNorm2d,
+            "BN3d": BatchNorm3d,
             # Fixed in https://github.com/pytorch/pytorch/pull/36382
-            "SyncBN": NaiveSyncBatchNorm if env.TORCH_VERSION <= (1, 5) else nn.SyncBatchNorm,
-            "FrozenBN": FrozenBatchNorm2d,
+            "SyncBN2d": NaiveSyncBatchNorm2d if env.TORCH_VERSION <= (1, 5) else nn.SyncBatchNorm,
+            "SyncBN3d": NaiveSyncBatchNorm3d if env.TORCH_VERSION <= (1, 5) else nn.SyncBatchNorm,
+            "FrozenBN": FrozenBatchNorm,
             "GN": lambda channels: nn.GroupNorm(32, channels),
             # for debugging:
             "nnSyncBN": nn.SyncBatchNorm,
-            "naiveSyncBN": NaiveSyncBatchNorm,
+            "naiveSyncBN2d": NaiveSyncBatchNorm2d,
+            "naiveSyncBN3d": NaiveSyncBatchNorm3d,
         }[norm]
     return norm(out_channels)
 
@@ -165,7 +175,7 @@ class AllReduce(Function):
         return grad_output
 
 
-class NaiveSyncBatchNorm(BatchNorm2d):
+class NaiveSyncBatchNorm2d(BatchNorm2d):
     """
     In PyTorch<=1.5, `nn.SyncBatchNorm` has incorrect gradient
     when the batch size on each worker is different.
@@ -234,6 +244,80 @@ class NaiveSyncBatchNorm(BatchNorm2d):
         bias = self.bias - mean * scale
         scale = scale.reshape(1, -1, 1, 1)
         bias = bias.reshape(1, -1, 1, 1)
+
+        self.running_mean += momentum * (mean.detach() - self.running_mean)
+        self.running_var += momentum * (var.detach() - self.running_var)
+        return input * scale + bias
+
+class NaiveSyncBatchNorm3d(BatchNorm3d):
+    """
+    In PyTorch<=1.5, `nn.SyncBatchNorm` has incorrect gradient
+    when the batch size on each worker is different.
+    (e.g., when scale augmentation is used, or when it is applied to mask head).
+
+    This is a slower but correct alternative to `nn.SyncBatchNorm`.
+
+    Note:
+        There isn't a single definition of Sync BatchNorm.
+
+        When ``stats_mode==""``, this module computes overall statistics by using
+        statistics of each worker with equal weight.  The result is true statistics
+        of all samples (as if they are all on one worker) only when all workers
+        have the same (N, D, H, W). This mode does not support inputs with zero batch size.
+
+        When ``stats_mode=="N"``, this module computes overall statistics by weighting
+        the statistics of each worker by their ``N``. The result is true statistics
+        of all samples (as if they are all on one worker) only when all workers
+        have the same (D, H, W). It is slower than ``stats_mode==""``.
+
+        Even though the result of this module may not be the true statistics of all samples,
+        it may still be reasonable because it might be preferrable to assign equal weights
+        to all workers, regardless of their (D, H, W) dimension, instead of putting larger weight
+        on larger images. From preliminary experiments, little difference is found between such
+        a simplified implementation and an accurate computation of overall mean & variance.
+    """
+
+    def __init__(self, *args, stats_mode="", **kwargs):
+        super().__init__(*args, **kwargs)
+        assert stats_mode in ["", "N"]
+        self._stats_mode = stats_mode
+
+    def forward(self, input):
+        if comm.get_world_size() == 1 or not self.training:
+            return super().forward(input)
+
+        B, C = input.shape[0], input.shape[1]
+
+        mean = torch.mean(input, dim=[0, 2, 3, 4])
+        meansqr = torch.mean(input * input, dim=[0, 2, 3, 4])
+
+        if self._stats_mode == "":
+            assert B > 0, 'SyncBatchNorm(stats_mode="") does not support zero batch size.'
+            vec = torch.cat([mean, meansqr], dim=0)
+            vec = AllReduce.apply(vec) * (1.0 / dist.get_world_size())
+            mean, meansqr = torch.split(vec, C)
+            momentum = self.momentum
+        else:
+            if B == 0:
+                vec = torch.zeros([2 * C + 1], device=mean.device, dtype=mean.dtype)
+                vec = vec + input.sum()  # make sure there is gradient w.r.t input
+            else:
+                vec = torch.cat(
+                    [mean, meansqr, torch.ones([1], device=mean.device, dtype=mean.dtype)], dim=0
+                )
+            vec = AllReduce.apply(vec * B)
+
+            total_batch = vec[-1].detach()
+            momentum = total_batch.clamp(max=1) * self.momentum  # no update if total_batch is 0
+            total_batch = torch.max(total_batch, torch.ones_like(total_batch))  # avoid div-by-zero
+            mean, meansqr, _ = torch.split(vec / total_batch, C)
+
+        var = meansqr - mean * mean
+        invstd = torch.rsqrt(var + self.eps)
+        scale = self.weight * invstd
+        bias = self.bias - mean * scale
+        scale = scale.reshape(1, -1, 1, 1, 1)
+        bias = bias.reshape(1, -1, 1, 1, 1)
 
         self.running_mean += momentum * (mean.detach() - self.running_mean)
         self.running_var += momentum * (var.detach() - self.running_var)

@@ -86,7 +86,7 @@ _C.INPUT.MASK_FORMAT = "polygon"  # alternative: "bitmask"
 # STACK
 _C.INPUT.STACK_SIZE = 11
 _C.INPUT.EXTENSION = ".png"
-_C.INPUT.STACK_SEPERATOR = "F"
+_C.INPUT.SLICE_SEPARATOR = "F"
 
 # -----------------------------------------------------------------------------
 # Dataset
@@ -133,6 +133,9 @@ _C.DATALOADER.IS_STACK = True
 # ---------------------------------------------------------------------------- #
 _C.MODEL.BACKBONE = CN()
 
+# Number of dimensions of the input image
+_C.MODEL.BACKBONE.IMAGE_DIM = 2
+
 _C.MODEL.BACKBONE.NAME = "build_resnet_backbone"
 # Freeze the first several stages so they are not trained.
 # There are 5 stages in ResNet. The first is a convolution, and the following
@@ -158,10 +161,10 @@ _C.MODEL.FPN.FUSE_TYPE = "sum"
 
 
 # ---------------------------------------------------------------------------- #
-# Seperator options
+# Separator options
 # ---------------------------------------------------------------------------- #
-_C.MODEL.SEPERATOR = CN()
-_C.MODEL.SEPERATOR.NAME = "SharedConvSeperator"
+_C.MODEL.SEPARATOR = CN()
+_C.MODEL.SEPARATOR.NAME = "From3dTo2d"
 
 # ---------------------------------------------------------------------------- #
 # Proposal generator options
