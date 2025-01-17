@@ -5,6 +5,7 @@ import time
 from collections import OrderedDict
 from contextlib import contextmanager
 import torch
+from itertools import chain
 
 from detectron2.utils.comm import get_world_size, is_main_process
 from detectron2.utils.logger import log_every_n_seconds
@@ -98,7 +99,7 @@ class DatasetEvaluators(DatasetEvaluator):
         return results
 
 
-def inference_on_dataset(model, data_loader, evaluator):
+def inference_on_dataset(model, data_loader, evaluator, is_stack):
     """
     Run model on the data_loader and evaluate the metrics with evaluator.
     Also benchmark the inference speed of `model.forward` accurately.
@@ -142,6 +143,10 @@ def inference_on_dataset(model, data_loader, evaluator):
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             total_compute_time += time.perf_counter() - start_compute_time
+
+            if is_stack:
+                inputs = chain.from_iterable(inputs)
+                outputs = chain.from_iterable(outputs)
             evaluator.process(inputs, outputs)
 
             iters_after_start = idx + 1 - num_warmup * int(idx >= num_warmup)
