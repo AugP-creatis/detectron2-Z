@@ -187,6 +187,8 @@ class DefaultPredictor:
         checkpointer = DetectionCheckpointer(self.model)
         checkpointer.load(cfg.MODEL.WEIGHTS)
 
+        self._use_amp = cfg.MODEL.USE_AMP
+
         self.aug = T.ResizeShortestEdge(
             [cfg.INPUT.MIN_SIZE_TEST, cfg.INPUT.MIN_SIZE_TEST], cfg.INPUT.MAX_SIZE_TEST
         )
@@ -231,7 +233,9 @@ class DefaultPredictor:
 
                 inputs = {"image": image, "height": height, "width": width}
 
-            predictions = self.model([inputs])[0]
+            with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=self._use_amp):
+                predictions = self.model([inputs])[0]
+
             return predictions
 
 
@@ -289,6 +293,7 @@ class DefaultTrainer(SimpleTrainer):
         # Assume these objects must be constructed in this order.
         model = self.build_model(cfg)
         optimizer = self.build_optimizer(cfg, model)
+        scaler = torch.amp.GradScaler('cuda', enabled=cfg.MODEL.USE_AMP)
         data_loader = self.build_train_loader(cfg)
 
         # For training, wrap with DDP. But don't need this for inference.
@@ -296,7 +301,7 @@ class DefaultTrainer(SimpleTrainer):
             model = DistributedDataParallel(
                 model, device_ids=[comm.get_local_rank()], broadcast_buffers=False
             )
-        super().__init__(model, data_loader, optimizer)
+        super().__init__(model, data_loader, optimizer, scaler, use_amp=cfg.MODEL.USE_AMP)
 
         self.scheduler = self.build_lr_scheduler(cfg, optimizer)
         # Assume no other objects need to be checkpointed.
@@ -306,7 +311,8 @@ class DefaultTrainer(SimpleTrainer):
             model,
             cfg.OUTPUT_DIR,
             optimizer=optimizer,
-            scheduler=self.scheduler,
+            scaler=scaler,
+            scheduler=self.scheduler
         )
         self.start_iter = 0
         self.max_iter = cfg.SOLVER.MAX_ITER

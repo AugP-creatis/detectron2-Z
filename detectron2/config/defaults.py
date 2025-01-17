@@ -26,6 +26,10 @@ _C.MODEL.LOAD_PROPOSALS = False
 _C.MODEL.MASK_ON = False
 _C.MODEL.KEYPOINT_ON = False
 _C.MODEL.DEVICE = "cuda"
+
+# Automatic Mixed Precision (some operations in torch.float16 instead of torch.float32)
+_C.MODEL.USE_AMP = False
+
 _C.MODEL.META_ARCHITECTURE = "GeneralizedRCNN"
 
 # Path (a file path, or URL like detectron2://.., https://..) to a checkpoint file

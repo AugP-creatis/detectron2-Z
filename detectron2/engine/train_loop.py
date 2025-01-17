@@ -175,13 +175,14 @@ class SimpleTrainer(TrainerBase):
     or write your own training loop.
     """
 
-    def __init__(self, model, data_loader, optimizer):
+    def __init__(self, model, data_loader, optimizer, scaler, use_amp):
         """
         Args:
             model: a torch Module. Takes a data from data_loader and returns a
                 dict of losses.
             data_loader: an iterable. Contains data to be used to call model.
             optimizer: a torch optimizer.
+            scaler: torch.amp.GradScaler
         """
         super().__init__()
 
@@ -197,6 +198,8 @@ class SimpleTrainer(TrainerBase):
         self.data_loader = data_loader
         self._data_loader_iter = iter(data_loader)
         self.optimizer = optimizer
+        self.scaler = scaler
+        self._use_amp = use_amp
 
     def run_step(self):
         """
@@ -213,8 +216,9 @@ class SimpleTrainer(TrainerBase):
         """
         If you want to do something with the losses, you can wrap the model.
         """
-        loss_dict = self.model(data)
-        losses = sum(loss_dict.values())
+        with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=self._use_amp):
+            loss_dict = self.model(data)
+            losses = sum(loss_dict.values())
         self._detect_anomaly(losses, loss_dict)
 
         metrics_dict = loss_dict
@@ -226,13 +230,14 @@ class SimpleTrainer(TrainerBase):
         wrap the optimizer with your custom `zero_grad()` method.
         """
         self.optimizer.zero_grad()
-        losses.backward()
+        self.scaler.scale(losses).backward()
 
         """
         If you need gradient clipping/scaling or other processing, you can
         wrap the optimizer with your custom `step()` method.
         """
-        self.optimizer.step()
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
 
     def _detect_anomaly(self, losses, loss_dict):
         if not torch.isfinite(losses).all():

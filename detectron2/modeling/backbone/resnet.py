@@ -35,9 +35,9 @@ __all__ = [
 ]
 
 class Conv(Enum):
-    CONV_2D = 1
-    CONV_3D = 2
-    CONV_P3D = 3
+    CONV_2D = "Conv2d"
+    CONV_3D = "Conv3d"
+    CONV_P3D = "ConvP3d"
 
 class BasicBlock(CNNBlockBase):
     """
