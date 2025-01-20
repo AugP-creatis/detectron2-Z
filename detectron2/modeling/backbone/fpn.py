@@ -201,7 +201,7 @@ class LastLevelMaxPool(nn.Module):
             x = F.max_pool2d(x, kernel_size=1, stride=2, padding=0)
         elif self._image_dim == 3:
             x = F.max_pool3d(x, kernel_size=1, stride=(1, 2, 2), padding=0)
-        return x
+        return [x]
 
 
 class LastLevelP6P7(nn.Module):
