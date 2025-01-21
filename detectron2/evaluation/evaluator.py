@@ -99,7 +99,7 @@ class DatasetEvaluators(DatasetEvaluator):
         return results
 
 
-def inference_on_dataset(model, data_loader, evaluator, is_stack):
+def inference_on_dataset(model, data_loader, evaluator, is_stack, use_amp):
     """
     Run model on the data_loader and evaluate the metrics with evaluator.
     Also benchmark the inference speed of `model.forward` accurately.
@@ -139,7 +139,8 @@ def inference_on_dataset(model, data_loader, evaluator, is_stack):
                 total_compute_time = 0
 
             start_compute_time = time.perf_counter()
-            outputs = model(inputs)
+            with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=use_amp):
+                outputs = model(inputs)
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             total_compute_time += time.perf_counter() - start_compute_time
