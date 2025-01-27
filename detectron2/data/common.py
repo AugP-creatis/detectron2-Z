@@ -11,7 +11,7 @@ from natsort import natsorted
 
 from detectron2.utils.serialize import PicklableWrapper
 
-__all__ = ["MapDataset", "DatasetFromList", "AspectRatioGroupedDataset"]
+__all__ = ["MapDataset", "DatasetFromList", "AspectRatioGroupedDataset", "stack_dicts"]
 
 
 class MapDataset(data.Dataset):
@@ -78,6 +78,56 @@ class MapDataset(data.Dataset):
                 )
 
 
+def gather_stack_dicts(lst: list, stack_size: int = 11, ext: str = ".png", sep: str = "F"):
+
+    stacks_dict = {basename(lst[0]['file_name']).split(sep, 1)[0] : [lst[0]]}
+    nb_img = len(lst)
+    for i in range(1, nb_img):
+        i_stack = basename(lst[i]['file_name']).split(sep, 1)[0]
+        if i_stack in stacks_dict:
+            stacks_dict[i_stack].append(lst[i])
+        else:
+            stacks_dict[i_stack] = [lst[i]]
+
+        if len(stacks_dict[i_stack]) == stack_size:
+            stacks_dict[i_stack] = natsorted(stacks_dict[i_stack], key = lambda d : basename(d['file_name'])[:-len(ext)])
+
+    # Create the list of the stacked dictionaries & verify if it is well constructed
+    logger = logging.getLogger(__name__)
+
+    z_lst = list(stacks_dict.values())
+    nb_stacks = len(z_lst)
+    logger.info("Number of stacks: {}".format(nb_stacks))
+    cnt_img = 0
+    cnt_too_big = 0
+    cnt_too_small = 0
+
+    for s in range(nb_stacks):
+        cnt_img += len(z_lst[s])
+        if len(z_lst[s]) == stack_size:
+            stack_sorted = True
+            for z in range(stack_size):
+                if basename(z_lst[s][z]['file_name']).split(sep, 1)[1][:-len(ext)] != str(z):
+                    stack_sorted = False
+            if not stack_sorted:
+                logger.warning("Stack {} is not sorted ({})".format(s, basename(z_lst[s][0]['file_name']).split(sep, 1)[0]))
+        elif len(z_lst[s]) > stack_size:
+            cnt_too_big += 1
+        elif len(z_lst[s]) < stack_size:
+            cnt_too_small +=1
+            
+    if cnt_img != nb_img:
+        logger.warning("There are {} images in total, which is not expected ({})".format(cnt_img, nb_img))
+    else:
+        logger.info("There are {} images in total".format(cnt_img))
+
+    assert cnt_too_big == 0, "{} stacks have a bigger size than expected ({})".format(cnt_too_big, stack_size)
+    assert cnt_too_small == 0, "{} stacks have a smaller size than expected ({})".format(cnt_too_small, stack_size)
+    logger.info("All stacks have {} images".format(stack_size))
+
+    return z_lst
+    
+
 class DatasetFromList(data.Dataset):
     """
     Wrap a list to a torch Dataset. It produces elements of the list as data.
@@ -86,10 +136,7 @@ class DatasetFromList(data.Dataset):
     def __init__(
             self, 
             lst: list,
-            is_stack: bool,
-            stack_size: int = 11,
-            ext: str = ".png",
-            sep: str = "F",
+            cfg,
             copy: bool = True,
             serialize: bool = True
         ):
@@ -103,62 +150,12 @@ class DatasetFromList(data.Dataset):
                 enabled, data loader workers can use shared RAM from master
                 process instead of making a copy.
         """
+        if cfg.DATALOADER.IS_STACK:
+            self._lst = gather_stack_dicts(lst, cfg.INPUT.STACK_SIZE, cfg.INPUT.EXTENSION, cfg.INPUT.SLICE_SEPARATOR)
+        else:
+            self._lst = lst
         self._copy = copy
         self._serialize = serialize
-
-        logger = logging.getLogger(__name__)
-
-        if is_stack:
-            stacks_dict = {basename(lst[0]['file_name']).split(sep, 1)[0] : [lst[0]]}
-            nb_img = len(lst)
-            for i in range(1, nb_img):
-                i_stack = basename(lst[i]['file_name']).split(sep, 1)[0]
-                if i_stack in stacks_dict:
-                    stacks_dict[i_stack].append(lst[i])
-                else:
-                    stacks_dict[i_stack] = [lst[i]]
-
-                if len(stacks_dict[i_stack]) == stack_size:
-                    stacks_dict[i_stack] = natsorted(stacks_dict[i_stack], key = lambda d : basename(d['file_name'])[:-len(ext)])
-
-            # Create the list of the stacked dictionaries & verify if it is well constructed
-            z_lst = list(stacks_dict.values())
-            nb_stacks = len(z_lst)
-            logger.info("Number of stacks: {}".format(nb_stacks))
-            cnt_img = 0
-            cnt_too_big = 0
-            cnt_too_small = 0
-            for s in range(nb_stacks):
-                cnt_img += len(z_lst[s])
-                if len(z_lst[s]) == stack_size:
-                    stack_sorted = True
-                    for z in range(stack_size):
-                        if basename(z_lst[s][z]['file_name']).split(sep, 1)[1][:-len(ext)] != str(z):
-                            stack_sorted = False
-                    if not stack_sorted:
-                        logger.warning("Stack {} is not sorted ({})".format(s, basename(z_lst[s][0]['file_name']).split(sep, 1)[0]))
-                elif len(z_lst[s]) > stack_size:
-                    cnt_too_big += 1
-                elif len(z_lst[s]) < stack_size:
-                    cnt_too_small +=1
-            
-            if cnt_img != nb_img:
-                logger.warning("There are {} images in total, which is not expected ({})".format(cnt_img, nb_img))
-            else:
-                logger.info("There are {} images in total".format(cnt_img))
-
-            if cnt_too_big != 0:
-                logger.warning("{} stacks have a bigger size than expected ({})".format(cnt_too_big, stack_size))
-            if cnt_too_small != 0:
-                logger.warning("{} stacks have a smaller size than expected ({})".format(cnt_too_small, stack_size))
-            if cnt_too_big == 0 and cnt_too_small == 0:
-                logger.info("All stacks have {} images".format(stack_size))
-
-            self._lst = z_lst
-        
-        else:
-             self._lst = lst
-
 
         def _serialize(data):
             buffer = pickle.dumps(data, protocol=-1)

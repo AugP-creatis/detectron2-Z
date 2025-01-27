@@ -99,7 +99,7 @@ class DatasetEvaluators(DatasetEvaluator):
         return results
 
 
-def inference_on_dataset(model, data_loader, evaluator, is_stack, use_amp):
+def inference_on_dataset(model, use_amp, data_loader, is_stack, evaluator, eval_stacks):
     """
     Run model on the data_loader and evaluate the metrics with evaluator.
     Also benchmark the inference speed of `model.forward` accurately.
@@ -146,8 +146,11 @@ def inference_on_dataset(model, data_loader, evaluator, is_stack, use_amp):
             total_compute_time += time.perf_counter() - start_compute_time
 
             if is_stack:
-                inputs = chain.from_iterable(inputs)
-                outputs = chain.from_iterable(outputs)
+                if eval_stacks:
+                    inputs = [input[0] for input in inputs]
+                else:
+                    inputs = chain.from_iterable(inputs)
+                    outputs = chain.from_iterable(outputs)
             evaluator.process(inputs, outputs)
 
             iters_after_start = idx + 1 - num_warmup * int(idx >= num_warmup)

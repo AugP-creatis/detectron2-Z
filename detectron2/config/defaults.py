@@ -93,6 +93,12 @@ _C.INPUT.EXTENSION = ".png"
 _C.INPUT.SLICE_SEPARATOR = "F"
 
 # -----------------------------------------------------------------------------
+# OUTPUT
+# -----------------------------------------------------------------------------
+_C.OUTPUT = CN()
+_C.OUTPUT.FILTER_DUPLICATES = False  # Filter duplicate predictions on multiple images of a stack
+
+# -----------------------------------------------------------------------------
 # Dataset
 # -----------------------------------------------------------------------------
 _C.DATASETS = CN()
@@ -130,7 +136,7 @@ _C.DATALOADER.REPEAT_THRESHOLD = 0.0
 _C.DATALOADER.FILTER_EMPTY_ANNOTATIONS = True
 
 # STACK
-_C.DATALOADER.IS_STACK = True
+_C.DATALOADER.IS_STACK = False
 
 # ---------------------------------------------------------------------------- #
 # Backbone options

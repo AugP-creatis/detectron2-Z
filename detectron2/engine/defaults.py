@@ -536,7 +536,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
                     )
                     results[dataset_name] = {}
                     continue
-            results_i = inference_on_dataset(model, data_loader, evaluator, cfg.DATALOADER.IS_STACK, cfg.MODEL.USE_AMP)
+            results_i = inference_on_dataset(model, cfg.MODEL.USE_AMP, data_loader, cfg.DATALOADER.IS_STACK, evaluator, cfg.OUTPUT.FILTER_DUPLICATES)
             results[dataset_name] = results_i
             if comm.is_main_process():
                 assert isinstance(

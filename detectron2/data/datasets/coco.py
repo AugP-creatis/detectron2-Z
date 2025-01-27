@@ -12,6 +12,7 @@ from fvcore.common.timer import Timer
 from PIL import Image
 
 from detectron2.structures import Boxes, BoxMode, PolygonMasks
+from detectron2.data import gather_stack_dicts
 
 from .. import DatasetCatalog, MetadataCatalog
 
@@ -274,7 +275,73 @@ def load_sem_seg(gt_root, image_root, gt_ext="png", image_ext="jpg"):
     return dataset_dicts
 
 
-def convert_to_coco_dict(dataset_name):
+def convert_to_coco_annotation(annotation, *, image_id, annotation_id, category_id):
+    # create a new dict with only COCO fields
+    coco_annotation = {}
+
+    # COCO requirement: XYWH box format
+    bbox = annotation["bbox"]
+    bbox_mode = annotation["bbox_mode"]
+    bbox = BoxMode.convert(bbox, bbox_mode, BoxMode.XYWH_ABS)
+
+    # COCO requirement: instance area
+    if "segmentation" in annotation:
+        # Computing areas for instances by counting the pixels
+        segmentation = annotation["segmentation"]
+        # TODO: check segmentation type: RLE, BinaryMask or Polygon
+        if isinstance(segmentation, list):
+            polygons = PolygonMasks([segmentation])
+            area = polygons.area()[0].item()
+        elif isinstance(segmentation, dict):  # RLE
+            area = mask_util.area(segmentation).item()
+        else:
+            raise TypeError(f"Unknown segmentation type {type(segmentation)}!")
+    else:
+        # Computing areas using bounding boxes
+        bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+        area = Boxes([bbox_xy]).area()[0].item()
+
+    if "keypoints" in annotation:
+        keypoints = annotation["keypoints"]  # list[int]
+        for idx, v in enumerate(keypoints):
+            if idx % 3 != 2:
+                # COCO's segmentation coordinates are floating points in [0, H or W],
+                # but keypoint coordinates are integers in [0, H-1 or W-1]
+                # For COCO format consistency we substract 0.5
+                # https://github.com/facebookresearch/detectron2/pull/175#issuecomment-551202163
+                keypoints[idx] = v - 0.5
+        if "num_keypoints" in annotation:
+            num_keypoints = annotation["num_keypoints"]
+        else:
+            num_keypoints = sum(kp > 0 for kp in keypoints[2::3])
+
+    # COCO requirement:
+    #   linking annotations to images
+    #   "id" field must start with 1
+    coco_annotation["id"] = annotation_id
+    coco_annotation["image_id"] = image_id
+    coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
+    coco_annotation["area"] = float(area)
+    coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
+    coco_annotation["category_id"] = category_id
+
+    # Add optional fields
+    if "keypoints" in annotation:
+        coco_annotation["keypoints"] = keypoints
+        coco_annotation["num_keypoints"] = num_keypoints
+
+    if "segmentation" in annotation:
+        seg = coco_annotation["segmentation"] = annotation["segmentation"]
+        if isinstance(seg, dict):  # RLE
+            counts = seg["counts"]
+            if not isinstance(counts, str):
+                # make it json-serializable
+                seg["counts"] = counts.decode("ascii")
+
+    return coco_annotation
+
+
+def convert_to_coco_dict(dataset_name, cfg):    #Works only for sharp classes when cfg.TEST.WHOLE_STACK is True
     """
     Convert an instance detection/segmentation or keypoint detection dataset
     in detectron2's standard format into COCO json format.
@@ -313,80 +380,48 @@ def convert_to_coco_dict(dataset_name):
     coco_images = []
     coco_annotations = []
 
-    for image_id, image_dict in enumerate(dataset_dicts):
-        coco_image = {
-            "id": image_dict.get("image_id", image_id),
-            "width": image_dict["width"],
-            "height": image_dict["height"],
-            "file_name": image_dict["file_name"],
-        }
-        coco_images.append(coco_image)
+    if cfg.OUTPUT.FILTER_DUPLICATES:
+        dataset_dicts = gather_stack_dicts(dataset_dicts, cfg.INPUT.STACK_SIZE, cfg.INPUT.EXTENSION, cfg.INPUT.SLICE_SEPARATOR)
 
-        anns_per_image = image_dict.get("annotations", [])
-        for annotation in anns_per_image:
-            # create a new dict with only COCO fields
-            coco_annotation = {}
+        for stack_id, stack_dicts in enumerate(dataset_dicts):
+            coco_image = {
+                "id": stack_dicts[0].get("image_id", stack_id),
+                "width": stack_dicts[0]["width"],
+                "height": stack_dicts[0]["height"],
+                "file_name": stack_dicts[0]["file_name"],
+            }
+            coco_images.append(coco_image)
+            
+            for image_dict in stack_dicts:
+                anns_per_image = image_dict.get("annotations", [])
+                for annotation in anns_per_image:
+                    coco_annotation = convert_to_coco_annotation(
+                        annotation,
+                        image_id=coco_image["id"],
+                        annotation_id=len(coco_annotations) + 1,
+                        category_id=reverse_id_mapper(annotation["category_id"])
+                    )
+                    coco_annotations.append(coco_annotation)
 
-            # COCO requirement: XYWH box format
-            bbox = annotation["bbox"]
-            bbox_mode = annotation["bbox_mode"]
-            bbox = BoxMode.convert(bbox, bbox_mode, BoxMode.XYWH_ABS)
+    else:
+        for image_id, image_dict in enumerate(dataset_dicts):
+            coco_image = {
+                "id": image_dict.get("image_id", image_id),
+                "width": image_dict["width"],
+                "height": image_dict["height"],
+                "file_name": image_dict["file_name"],
+            }
+            coco_images.append(coco_image)
 
-            # COCO requirement: instance area
-            if "segmentation" in annotation:
-                # Computing areas for instances by counting the pixels
-                segmentation = annotation["segmentation"]
-                # TODO: check segmentation type: RLE, BinaryMask or Polygon
-                if isinstance(segmentation, list):
-                    polygons = PolygonMasks([segmentation])
-                    area = polygons.area()[0].item()
-                elif isinstance(segmentation, dict):  # RLE
-                    area = mask_util.area(segmentation).item()
-                else:
-                    raise TypeError(f"Unknown segmentation type {type(segmentation)}!")
-            else:
-                # Computing areas using bounding boxes
-                bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-                area = Boxes([bbox_xy]).area()[0].item()
-
-            if "keypoints" in annotation:
-                keypoints = annotation["keypoints"]  # list[int]
-                for idx, v in enumerate(keypoints):
-                    if idx % 3 != 2:
-                        # COCO's segmentation coordinates are floating points in [0, H or W],
-                        # but keypoint coordinates are integers in [0, H-1 or W-1]
-                        # For COCO format consistency we substract 0.5
-                        # https://github.com/facebookresearch/detectron2/pull/175#issuecomment-551202163
-                        keypoints[idx] = v - 0.5
-                if "num_keypoints" in annotation:
-                    num_keypoints = annotation["num_keypoints"]
-                else:
-                    num_keypoints = sum(kp > 0 for kp in keypoints[2::3])
-
-            # COCO requirement:
-            #   linking annotations to images
-            #   "id" field must start with 1
-            coco_annotation["id"] = len(coco_annotations) + 1
-            coco_annotation["image_id"] = coco_image["id"]
-            coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
-            coco_annotation["area"] = float(area)
-            coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
-            coco_annotation["category_id"] = reverse_id_mapper(annotation["category_id"])
-
-            # Add optional fields
-            if "keypoints" in annotation:
-                coco_annotation["keypoints"] = keypoints
-                coco_annotation["num_keypoints"] = num_keypoints
-
-            if "segmentation" in annotation:
-                seg = coco_annotation["segmentation"] = annotation["segmentation"]
-                if isinstance(seg, dict):  # RLE
-                    counts = seg["counts"]
-                    if not isinstance(counts, str):
-                        # make it json-serializable
-                        seg["counts"] = counts.decode("ascii")
-
-            coco_annotations.append(coco_annotation)
+            anns_per_image = image_dict.get("annotations", [])
+            for annotation in anns_per_image:
+                coco_annotation = convert_to_coco_annotation(
+                    annotation,
+                    image_id=coco_image["id"],
+                    annotation_id=len(coco_annotations) + 1,
+                    category_id=reverse_id_mapper(annotation["category_id"])
+                )
+                coco_annotations.append(coco_annotation)
 
     logger.info(
         "Conversion finished, "
@@ -403,7 +438,7 @@ def convert_to_coco_dict(dataset_name):
     return coco_dict
 
 
-def convert_to_coco_json(dataset_name, output_file, allow_cached=True):
+def convert_to_coco_json(dataset_name, cfg, output_file, allow_cached=True):
     """
     Converts dataset into COCO format and saves it to a json file.
     dataset_name must be registered in DatasetCatalog and in detectron2's standard format.
@@ -428,7 +463,7 @@ def convert_to_coco_json(dataset_name, output_file, allow_cached=True):
             )
         else:
             logger.info(f"Converting annotations of dataset '{dataset_name}' to COCO format ...)")
-            coco_dict = convert_to_coco_dict(dataset_name)
+            coco_dict = convert_to_coco_dict(dataset_name, cfg)
 
             logger.info(f"Caching COCO format annotations at '{output_file}' ...")
             with PathManager.open(output_file, "w") as f:

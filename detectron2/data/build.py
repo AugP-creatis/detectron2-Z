@@ -325,15 +325,8 @@ def build_detection_train_loader(cfg, mapper=None):
         else 0,
         proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN if cfg.MODEL.LOAD_PROPOSALS else None,
     )
-    dataset = DatasetFromList(
-        dataset_dicts,
-        cfg.DATALOADER.IS_STACK,
-        cfg.INPUT.STACK_SIZE,
-        cfg.INPUT.EXTENSION,
-        cfg.INPUT.SLICE_SEPARATOR,
-        copy=False
-    )
-
+    
+    dataset = DatasetFromList(dataset_dicts, cfg, copy=False)
     if mapper is None:
         mapper = DatasetMapper(cfg, True)
     dataset = MapDataset(dataset, mapper, cfg.DATALOADER.IS_STACK)
@@ -387,14 +380,7 @@ def build_detection_test_loader(cfg, dataset_name, mapper=None):
         else None,
     )
 
-    dataset = DatasetFromList(
-        dataset_dicts,
-        cfg.DATALOADER.IS_STACK,
-        cfg.INPUT.STACK_SIZE,
-        cfg.INPUT.EXTENSION,
-        cfg.INPUT.SLICE_SEPARATOR,
-        copy=False
-    )
+    dataset = DatasetFromList(dataset_dicts, cfg, copy=False)
     if mapper is None:
         mapper = DatasetMapper(cfg, False)
     dataset = MapDataset(dataset, mapper, cfg.DATALOADER.IS_STACK)
