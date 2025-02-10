@@ -7,6 +7,7 @@ import pprint
 from abc import ABCMeta, abstractmethod
 from typing import List, Optional, Tuple, Union
 from fvcore.transforms.transform import Transform, TransformList
+import logging
 
 """
 Overview of the augmentation system:
@@ -52,6 +53,7 @@ To extend the system, one can do:
 __all__ = [
     "Augmentation",
     "TransformGen",
+    "KeepAugmentations",
     "apply_transform_gens",
     "AugInput",
     "StandardAugInput",
@@ -123,6 +125,34 @@ class Augmentation(metaclass=ABCMeta):
                 if k != "self" and not k.startswith("_"):
                     setattr(self, k, v)
 
+    def _init_random_params(self, params: Tuple[str]):
+        self._random_params = {param: None for param in params}
+
+    def set_random_param(self, param: str, value):
+        logger = logging.getLogger(__name__)
+        if param in self._random_params:
+            if self._random_params[param] is None:
+                self._random_params[param] = value
+            else:
+                logger.warning("{} should be None before new randomization. Consider using clear_parameters() method from Augmentation class".format(param))
+        else:
+            logger.warning("{} is not a random parameter for {} augmentation".format(param, type(self)))
+
+    def get_random_param(self, param: str):
+        logger = logging.getLogger(__name__)
+        if param in self._random_params:
+            return self._random_params[param]
+        else:
+            logger.warning("{} is not a random parameter for {} augmentation".format(param, type(self)))
+
+    @abstractmethod
+    def randomize_parameters(self):
+        pass
+    
+    def clear_parameters(self):
+        for param in self._random_params:
+            self._random_params[param] = None
+
     # NOTE: in the future, can allow it to return list[Augmentation],
     # to delegate augmentation to others
     @abstractmethod
@@ -181,6 +211,21 @@ TransformGen = Augmentation
 """
 Alias for Augmentation, since it is something that generates :class:`Transform`s
 """
+
+
+class KeepAugmentations:   #Context manager
+    def __init__(self, augmentations: List[Union[Augmentation, Transform]]):
+        self.augmentations = augmentations
+
+    def __enter__(self):
+        for aug in self.augmentations:
+            if isinstance(aug, Augmentation):
+                aug.randomize_parameters()
+
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        for aug in self.augmentations:
+            if isinstance(aug, Augmentation):
+                aug.clear_parameters()
 
 
 class AugInput:

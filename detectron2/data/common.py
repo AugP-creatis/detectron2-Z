@@ -11,7 +11,7 @@ from natsort import natsorted
 
 from detectron2.utils.serialize import PicklableWrapper
 
-__all__ = ["MapDataset", "DatasetFromList", "AspectRatioGroupedDataset", "stack_dicts"]
+__all__ = ["MapDataset", "DatasetFromList", "AspectRatioGroupedDataset", "gather_stack_dicts"]
 
 
 class MapDataset(data.Dataset):
@@ -26,12 +26,9 @@ class MapDataset(data.Dataset):
             elements from the dataset.
     """
 
-    def __init__(self, dataset, map_func, is_stack: bool):
+    def __init__(self, dataset, map_func):
         self._dataset = dataset
         self._map_func = PicklableWrapper(map_func)  # wrap so that a lambda will work
-        self._is_stack = is_stack
-        if self._is_stack:
-            self._stack_size = len(self._dataset[0])
 
         self._rng = random.Random(42)
         self._fallback_candidates = set(range(len(dataset)))
@@ -44,25 +41,10 @@ class MapDataset(data.Dataset):
         cur_idx = int(idx)
 
         while True:
-            if self._is_stack:
-                z_data = [None] * self._stack_size
-                map_succeed = True
-                for z in range(self._stack_size):
-                    data = self._map_func(self._dataset[cur_idx][z])
-                    if data is not None:
-                        z_data[z] = data
-                    else:
-                        map_succeed = False
-
-                if map_succeed:
-                    self._fallback_candidates.add(cur_idx)
-                    return z_data
-
-            else:
-                data = self._map_func(self._dataset[cur_idx])
-                if data is not None:
-                    self._fallback_candidates.add(cur_idx)
-                    return data
+            data = self._map_func(self._dataset[cur_idx])
+            if data is not None:
+                self._fallback_candidates.add(cur_idx)
+                return data
 
             # _map_func fails for this idx, use a random new index from the pool
             retry_count += 1

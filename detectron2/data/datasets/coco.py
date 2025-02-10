@@ -341,7 +341,7 @@ def convert_to_coco_annotation(annotation, *, image_id, annotation_id, category_
     return coco_annotation
 
 
-def convert_to_coco_dict(dataset_name, cfg):    #Works only for sharp classes when cfg.TEST.WHOLE_STACK is True
+def convert_to_coco_dict(dataset_name, cfg):    #Works only for sharp classes when cfg.OUTPUT.FILTER_DUPLICATES is True
     """
     Convert an instance detection/segmentation or keypoint detection dataset
     in detectron2's standard format into COCO json format.
