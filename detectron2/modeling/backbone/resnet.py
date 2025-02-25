@@ -26,6 +26,7 @@ from collections.abc import Iterable
 __all__ = [
     "ResNetBlockBase",
     "BasicBlock",
+    "VeryBasicBlock",
     "BottleneckBlock",
     "DeformBottleneckBlock",
     "BasicStem",
@@ -33,6 +34,18 @@ __all__ = [
     "make_stage",
     "build_resnet_backbone",
 ]
+
+def transform_3d_kernel_to_2d(**kwargs):
+    default_args = {"kernel_size": 1, "padding": 0, "dilation": 1}
+
+    kwargs_2d = {}
+    for k, v in kwargs.items():
+        if isinstance(v, Iterable):
+            kwargs_2d[k] = (default_args[k],) + tuple(v[1:])
+        else:
+            kwargs_2d[k] = (default_args[k], v, v)
+
+    return kwargs_2d
 
 class Conv(Enum):
     CONV_2D = "Conv2d"
@@ -45,7 +58,7 @@ class BasicBlock(CNNBlockBase):
     with two 3x3 conv layers and a projection shortcut if needed.
     """
 
-    def __init__(self, conv_type, in_channels, out_channels, kernel_size, *, stride=1, norm="BN2d"):
+    def __init__(self, conv_type, in_channels, out_channels, kernel_size, *, stride=1, norm="BN2d", inter_slice=True):
         """
         Args:
             conv_type (Conv): member of the Conv Enum
@@ -67,6 +80,20 @@ class BasicBlock(CNNBlockBase):
             ConvSize3 = ConvP3d
             ConvSize1 = Conv3d
 
+        if isinstance(kernel_size, Iterable):
+            padding = tuple(i//2 for i in kernel_size)
+        else:
+            padding = kernel_size//2
+
+        if conv_type in (Conv.CONV_3D, Conv.CONV_P3D):
+            if not inter_slice:
+                args_2d = transform_3d_kernel_to_2d(
+                    kernel_size=kernel_size,
+                    padding=padding
+                )
+                kernel_size = args_2d["kernel_size"]
+                padding = args_2d["padding"]
+
         if in_channels != out_channels:
             self.shortcut = ConvSize1(
                 in_channels,
@@ -79,11 +106,6 @@ class BasicBlock(CNNBlockBase):
         else:
             self.shortcut = None
         
-        if isinstance(kernel_size, Iterable):
-            padding = tuple(i//2 for i in kernel_size)
-        else:
-            padding = kernel_size//2
-
         self.conv1 = ConvSize3(
             in_channels,
             out_channels,
@@ -123,6 +145,69 @@ class BasicBlock(CNNBlockBase):
         return out
 
 
+class VeryBasicBlock(CNNBlockBase):
+    """
+    The basic residual block for ResNet-18 and ResNet-34 defined in :paper:`ResNet`,
+    with two 3x3 conv layers and a projection shortcut if needed.
+    """
+
+    def __init__(self, conv_type, in_channels, out_channels, kernel_size, *, stride=1, norm="BN2d", inter_slice=True):
+        """
+        Args:
+            conv_type (Conv): member of the Conv Enum
+            in_channels (int): Number of input channels.
+            out_channels (int): Number of output channels.
+            stride (int): Stride for the first conv.
+            norm (str or callable): normalization for all conv layers.
+                See :func:`layers.get_norm` for supported format.
+        """
+        super().__init__(in_channels, out_channels, stride)
+
+        if conv_type == Conv.CONV_2D:
+            ConvSize3 = Conv2d
+        elif conv_type == Conv.CONV_3D:
+            ConvSize3 = Conv3d
+        elif conv_type == Conv.CONV_P3D:
+            ConvSize3 = ConvP3d
+
+        if isinstance(kernel_size, Iterable):
+            padding = tuple(i//2 for i in kernel_size)
+        else:
+            padding = kernel_size//2
+
+        if conv_type in (Conv.CONV_3D, Conv.CONV_P3D):
+            if not inter_slice:
+                args_2d = transform_3d_kernel_to_2d(
+                    kernel_size=kernel_size,
+                    padding=padding
+                )
+                kernel_size = args_2d["kernel_size"]
+                padding = args_2d["padding"]
+
+        self.shortcut = in_channels == out_channels
+
+        self.conv1 = ConvSize3(
+            in_channels,
+            out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            bias=False,
+            norm=get_norm(norm, out_channels),
+        )
+
+        init_module(self.conv1, weight_init.c2_msra_fill)
+
+    def forward(self, x):
+        out = self.conv1(x)
+
+        if self.shortcut:
+            out += x
+
+        out = F.relu_(out)
+        return out
+
+
 class BottleneckBlock(CNNBlockBase):
     """
     The standard bottleneck residual block used by ResNet-50, 101 and 152
@@ -135,14 +220,15 @@ class BottleneckBlock(CNNBlockBase):
         conv_type,
         in_channels,
         out_channels,
+        kernel_size,
         *,
         bottleneck_channels,
-        kernel_size,
         stride=1,
         num_groups=1,
         norm="BN2d",
         stride_in_1x1=False,
         dilation=1,
+        inter_slice=True
     ):
         """
         Args:
@@ -157,8 +243,6 @@ class BottleneckBlock(CNNBlockBase):
         """
         super().__init__(in_channels, out_channels, stride)
 
-        self.cnt = 0
-
         if conv_type == Conv.CONV_2D:
             ConvSize3 = Conv2d
             ConvSize1 = Conv2d
@@ -168,6 +252,22 @@ class BottleneckBlock(CNNBlockBase):
         elif conv_type == Conv.CONV_P3D:
             ConvSize3 = ConvP3d
             ConvSize1 = Conv3d
+
+        if isinstance(kernel_size, Iterable):
+            padding = tuple(i//2 * dilation for i in kernel_size)
+        else:
+            padding = kernel_size//2 * dilation
+
+        if conv_type in (Conv.CONV_3D, Conv.CONV_P3D):
+            if not inter_slice:
+                args_2d = transform_3d_kernel_to_2d(
+                    kernel_size=kernel_size,
+                    padding=padding,
+                    dilation=dilation
+                )
+                kernel_size = args_2d["kernel_size"]
+                padding = args_2d["padding"]
+                dilation = args_2d["dilation"]
 
         if in_channels != out_channels:
             self.shortcut = ConvSize1(
@@ -194,11 +294,6 @@ class BottleneckBlock(CNNBlockBase):
             bias=False,
             norm=get_norm(norm, bottleneck_channels),
         )
-
-        if isinstance(kernel_size, Iterable):
-            padding = tuple(i//2 * dilation for i in kernel_size)
-        else:
-            padding = kernel_size//2 * dilation
 
         self.conv2 = ConvSize3(
             bottleneck_channels,
@@ -377,17 +472,17 @@ class BasicStem(CNNBlockBase):
     The standard ResNet stem (layers before the first residual block).
     """
 
-    def __init__(self, image_dim, in_channels=3, out_channels=64, norm="BN2d"):
+    def __init__(self, channel_dims, in_channels=3, out_channels=64, norm="BN2d"):
         """
         Args:
             norm (str or callable): norm after the first conv layer.
                 See :func:`layers.get_norm` for supported format.
         """
         super().__init__(in_channels, out_channels, 4)
-        self._image_dim = image_dim
+        self._channel_dims = channel_dims
         self.in_channels = in_channels
 
-        if self._image_dim == 2:
+        if self._channel_dims == 2:
             self.conv1 = Conv2d(
                 in_channels,
                 out_channels,
@@ -397,7 +492,7 @@ class BasicStem(CNNBlockBase):
                 bias=False,
                 norm=get_norm(norm, out_channels),
             )
-        elif self._image_dim == 3:
+        elif self._channel_dims == 3:
             self.conv1 = Conv3d(
                 in_channels,
                 out_channels,
@@ -412,19 +507,91 @@ class BasicStem(CNNBlockBase):
     def forward(self, x):
         x = self.conv1(x)
         x = F.relu_(x)
-        if self._image_dim == 2:
+        if self._channel_dims == 2:
             x = F.max_pool2d(x, kernel_size=3, stride=2, padding=1)
-        elif self._image_dim == 3:
+        elif self._channel_dims == 3:
             x = F.max_pool3d(x, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
         return x
 
+
+class TwoConvStem(CNNBlockBase):
+    """
+    The standard ResNet stem (layers before the first residual block).
+    """
+
+    def __init__(self, channel_dims, in_channels=3, out_channels=64, norm="BN2d"):
+        """
+        Args:
+            norm (str or callable): norm after the first conv layer.
+                See :func:`layers.get_norm` for supported format.
+        """
+        super().__init__(in_channels, out_channels, 4)
+        self._channel_dims = channel_dims
+        self.in_channels = in_channels
+
+        if self._channel_dims == 2:
+            self.conv1 = Conv2d(
+                in_channels,
+                2*out_channels,
+                kernel_size=5,
+                stride=2,
+                padding=2,
+                bias=False,
+                norm=get_norm(norm, 2*out_channels),
+            )
+            self.conv2 = Conv2d(
+                2*out_channels,
+                out_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+                norm=get_norm(norm, out_channels),
+            )
+
+        elif self._channel_dims == 3:
+            self.conv1 = Conv3d(
+                in_channels,
+                2*out_channels,
+                kernel_size=(1, 5, 5),
+                stride=(1, 2, 2),
+                padding=(0, 2, 2),
+                bias=False,
+                norm=get_norm(norm, 2*out_channels),
+            )
+            self.conv2 = Conv3d(
+                2*out_channels,
+                out_channels,
+                kernel_size=(1, 3, 3),
+                stride=1,
+                padding=(0, 1, 1),
+                bias=False,
+                norm=get_norm(norm, out_channels),
+            )
+
+        weight_init.c2_msra_fill(self.conv1)
+        weight_init.c2_msra_fill(self.conv2)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = F.relu_(x)
+        x = self.conv2(x)
+        x = F.relu_(x)
+
+        if self._channel_dims == 2:
+            x = F.max_pool2d(x, kernel_size=3, stride=2, padding=1)
+        elif self._channel_dims == 3:
+            x = F.max_pool3d(x, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
+        
+        return x
+    
 
 class ResNet(Backbone):
     """
     Implement :paper:`ResNet`.
     """
 
-    def __init__(self, image_dim, stem, stages, num_classes=None, out_features=None):
+    def __init__(self, channel_dims, stem, stages, num_classes=None, out_features=None):
         """
         Args:
             stem (nn.Module): a stem module
@@ -437,7 +604,7 @@ class ResNet(Backbone):
                 If None, will return the output of the last layer.
         """
         super().__init__()
-        self._image_dim = image_dim
+        self._channel_dims = channel_dims
         self.stem = stem
         self.num_classes = num_classes
 
@@ -467,9 +634,9 @@ class ResNet(Backbone):
             self._out_feature_channels[name] = curr_channels = blocks[-1].out_channels
 
         if num_classes is not None:
-            if self._image_dim == 2:
+            if self._channel_dims == 2:
                 self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-            elif self._image_dim == 3:
+            elif self._channel_dims == 3:
                 self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
             self.linear = nn.Linear(curr_channels, num_classes)
 
@@ -495,9 +662,9 @@ class ResNet(Backbone):
         Returns:
             dict[str->Tensor]
         """
-        if self._image_dim == 2:
+        if self._channel_dims == 2:
             assert x.dim() == 4, f"ResNet takes an input of shape (N, C, H, W). Got {x.shape} instead!"
-        elif self._image_dim == 3:
+        elif self._channel_dims == 3:
             assert x.dim() == 5, f"ResNet takes an input of shape (N, C, D, H, W). Got {x.shape} instead!"
 
         outputs = {}
@@ -608,29 +775,38 @@ def build_resnet_backbone(cfg, input_shape):
     Returns:
         ResNet: a :class:`ResNet` instance.
     """
-    image_dim = cfg.MODEL.BACKBONE.IMAGE_DIM
-    if image_dim == 2 :
+    channel_dims = cfg.MODEL.BACKBONE.DIM
+    if channel_dims == 2 :
         conv_type_per_stage = [Conv.CONV_2D] * 4
         kernel_size_per_stage = [3] * 4
         downsampling = (2, 2)
-    elif image_dim == 3 :
-        conv_type_per_stage = [Conv.CONV_3D, Conv.CONV_3D, Conv.CONV_P3D, Conv.CONV_P3D]
-        kernel_size_per_stage = [(1, 3, 3), 3, 3, 3]
+    elif channel_dims == 3 :
+        conv_type_per_stage = [Conv.CONV_3D, Conv.CONV_P3D, Conv.CONV_P3D, Conv.CONV_P3D]
+        kernel_size_per_stage = [3, 3, 3, 3]
         downsampling = (1, 2, 2)
 
     # need registration of new blocks/stems?
+    depth = cfg.MODEL.RESNETS.DEPTH
     norm = cfg.MODEL.RESNETS.NORM
-    stem = BasicStem(
-        image_dim=image_dim,
-        in_channels=input_shape.channels,
-        out_channels=cfg.MODEL.RESNETS.STEM_OUT_CHANNELS,
-        norm=norm,
-    )
+
+    if depth == 11:
+        stem = TwoConvStem(
+            channel_dims=channel_dims,
+            in_channels=input_shape.channels,
+            out_channels=cfg.MODEL.RESNETS.STEM_OUT_CHANNELS,
+            norm=norm,
+        )
+    else:
+        stem = BasicStem(
+            channel_dims=channel_dims,
+            in_channels=input_shape.channels,
+            out_channels=cfg.MODEL.RESNETS.STEM_OUT_CHANNELS,
+            norm=norm,
+        )
 
     # fmt: off
     freeze_at           = cfg.MODEL.BACKBONE.FREEZE_AT
     out_features        = cfg.MODEL.RESNETS.OUT_FEATURES
-    depth               = cfg.MODEL.RESNETS.DEPTH
     num_groups          = cfg.MODEL.RESNETS.NUM_GROUPS
     width_per_group     = cfg.MODEL.RESNETS.WIDTH_PER_GROUP
     bottleneck_channels = num_groups * width_per_group
@@ -641,10 +817,12 @@ def build_resnet_backbone(cfg, input_shape):
     deform_on_per_stage = cfg.MODEL.RESNETS.DEFORM_ON_PER_STAGE
     deform_modulated    = cfg.MODEL.RESNETS.DEFORM_MODULATED
     deform_num_groups   = cfg.MODEL.RESNETS.DEFORM_NUM_GROUPS
+    inter_slice         = cfg.MODEL.BACKBONE.INTER_SLICE
     # fmt: on
     assert res5_dilation in {1, 2}, "res5_dilation cannot be {}.".format(res5_dilation)
 
     num_blocks_per_stage = {
+        11: [2, 2, 2, 2],
         18: [2, 2, 2, 2],
         34: [3, 4, 6, 3],
         50: [3, 4, 6, 3],
@@ -677,9 +855,12 @@ def build_resnet_backbone(cfg, input_shape):
             "in_channels": in_channels,
             "out_channels": out_channels,
             "norm": norm,
+            "inter_slice": inter_slice,
         }
+        if depth == 11:
+            stage_kargs["block_class"] = VeryBasicBlock
         # Use BasicBlock for R18 and R34.
-        if depth in [18, 34]:
+        elif depth in [18, 34]:
             stage_kargs["block_class"] = BasicBlock
         else:
             stage_kargs["bottleneck_channels"] = bottleneck_channels
@@ -697,4 +878,4 @@ def build_resnet_backbone(cfg, input_shape):
         out_channels *= 2
         bottleneck_channels *= 2
         stages.append(blocks)
-    return ResNet(image_dim, stem, stages, out_features=out_features).freeze(freeze_at)
+    return ResNet(channel_dims, stem, stages, out_features=out_features).freeze(freeze_at)

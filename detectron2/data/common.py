@@ -132,7 +132,7 @@ class DatasetFromList(data.Dataset):
                 enabled, data loader workers can use shared RAM from master
                 process instead of making a copy.
         """
-        if cfg.DATALOADER.IS_STACK:
+        if cfg.INPUT.IS_STACK:
             self._lst = gather_stack_dicts(lst, cfg.INPUT.STACK_SIZE, cfg.INPUT.EXTENSION, cfg.INPUT.SLICE_SEPARATOR)
         else:
             self._lst = lst

@@ -21,7 +21,7 @@ class TridentBottleneckBlock(ResNetBlockBase):
         bottleneck_channels,
         stride=1,
         num_groups=1,
-        norm="BN2d",
+        norm="BN",
         stride_in_1x1=False,
         num_branch=3,
         dilations=(1, 2, 3),

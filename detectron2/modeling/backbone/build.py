@@ -25,10 +25,16 @@ def build_backbone(cfg, input_shape=None):
         an instance of :class:`Backbone`
     """
     if input_shape is None:
-        if cfg.DATALOADER.IS_STACK:
-            input_shape = ShapeSpec(stack_size=cfg.INPUT.STACK_SIZE, channels=len(cfg.MODEL.PIXEL_MEAN))
+        img_channels = len(cfg.MODEL.PIXEL_MEAN)
+        if cfg.MODEL.EARLY_FILTER.ENABLED:
+            img_channels *= 2
+        if cfg.INPUT.IS_STACK:
+            if cfg.MODEL.BACKBONE.DIM == 2:
+                input_shape = ShapeSpec(channels = cfg.INPUT.STACK_SIZE * img_channels)
+            elif cfg.MODEL.BACKBONE.DIM == 3:
+                input_shape = ShapeSpec(stack_size=cfg.INPUT.STACK_SIZE, channels=img_channels)
         else:
-            input_shape = ShapeSpec(channels=len(cfg.MODEL.PIXEL_MEAN))
+            input_shape = ShapeSpec(channels=img_channels)
 
     backbone_name = cfg.MODEL.BACKBONE.NAME
     backbone = BACKBONE_REGISTRY.get(backbone_name)(cfg, input_shape)

@@ -45,6 +45,10 @@ _C.MODEL.PIXEL_MEAN = [103.530, 116.280, 123.675]
 # Otherwise, you can use [57.375, 57.120, 58.395] (ImageNet std)
 _C.MODEL.PIXEL_STD = [1.0, 1.0, 1.0]
 
+# Filter applied on each channel of the normalized image.
+# Result is concatenated (in channels) with the normalized image and passed to the next model stages.
+_C.MODEL.EARLY_FILTER = CN({"ENABLED": False})
+_C.MODEL.EARLY_FILTER.OPERATOR = "Sobel"
 
 # -----------------------------------------------------------------------------
 # INPUT
@@ -88,6 +92,7 @@ _C.INPUT.FORMAT = "BGR"
 _C.INPUT.MASK_FORMAT = "polygon"  # alternative: "bitmask"
 
 # STACK
+_C.INPUT.IS_STACK = False
 _C.INPUT.STACK_SIZE = 11
 _C.INPUT.EXTENSION = ".png"
 _C.INPUT.SLICE_SEPARATOR = "F"
@@ -96,7 +101,12 @@ _C.INPUT.SLICE_SEPARATOR = "F"
 # OUTPUT
 # -----------------------------------------------------------------------------
 _C.OUTPUT = CN()
-_C.OUTPUT.FILTER_DUPLICATES = False  # Filter duplicate predictions on multiple images of a stack
+# Filter duplicate predictions on multiple images/slices of a stack
+# OUTPUT.FILTER_DUPLICATES should be True if OUTPUT.GATHER_STACK_RESULTS is True
+_C.OUTPUT.FILTER_DUPLICATES = False
+# Gather in the same object (stack) the instances from multiple images/slices
+# OUTPUT.FILTER_DUPLICATES should be True if OUTPUT.GATHER_STACK_RESULTS is True
+_C.OUTPUT.GATHER_STACK_RESULTS = False
 
 # -----------------------------------------------------------------------------
 # Dataset
@@ -135,16 +145,15 @@ _C.DATALOADER.REPEAT_THRESHOLD = 0.0
 # training dataloader will filter out images without associated annotations
 _C.DATALOADER.FILTER_EMPTY_ANNOTATIONS = True
 
-# STACK
-_C.DATALOADER.IS_STACK = False
-
 # ---------------------------------------------------------------------------- #
 # Backbone options
 # ---------------------------------------------------------------------------- #
 _C.MODEL.BACKBONE = CN()
 
 # Number of dimensions of the input image
-_C.MODEL.BACKBONE.IMAGE_DIM = 2
+_C.MODEL.BACKBONE.DIM = 2
+# Enable inter-slice knowledge when BACKBONE.DIM is equal to 3
+_C.MODEL.BACKBONE.INTER_SLICE = True
 
 _C.MODEL.BACKBONE.NAME = "build_resnet_backbone"
 # Freeze the first several stages so they are not trained.
@@ -532,6 +541,7 @@ _C.SOLVER.MAX_ITER = 40000
 _C.SOLVER.BASE_LR = 0.001
 
 _C.SOLVER.MOMENTUM = 0.9
+_C.SOLVER.DAMPENING = _C.SOLVER.MOMENTUM
 
 _C.SOLVER.NESTEROV = False
 

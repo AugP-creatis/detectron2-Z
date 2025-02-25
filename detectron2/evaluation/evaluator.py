@@ -147,7 +147,7 @@ def inference_on_dataset(model, use_amp, data_loader, is_stack, evaluator, eval_
 
             if is_stack:
                 if eval_stacks:
-                    inputs = [input[0] for input in inputs]
+                    inputs = [input[0] for input in inputs] #Take first slice/image for the metadata of the stack
                 else:
                     inputs = chain.from_iterable(inputs)
                     outputs = chain.from_iterable(outputs)

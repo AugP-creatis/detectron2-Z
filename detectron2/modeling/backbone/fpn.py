@@ -21,7 +21,7 @@ class FPN(Backbone):
     """
 
     def __init__(
-        self, image_dim, bottom_up, in_features, out_channels, norm="", top_block=None, fuse_type="sum"
+        self, channel_dims, bottom_up, in_features, out_channels, norm="", top_block=None, fuse_type="sum"
     ):
         """
         Args:
@@ -63,7 +63,7 @@ class FPN(Backbone):
             lateral_norm = get_norm(norm, out_channels)
             output_norm = get_norm(norm, out_channels)
 
-            if image_dim == 2:
+            if channel_dims == 2:
                 lateral_conv = Conv2d(
                     in_channels, out_channels, kernel_size=1, bias=use_bias, norm=lateral_norm
                 )
@@ -76,7 +76,7 @@ class FPN(Backbone):
                     bias=use_bias,
                     norm=output_norm,
                 )
-            elif image_dim == 3:
+            elif channel_dims == 3:
                 lateral_conv = Conv3d(
                     in_channels, out_channels, kernel_size=1, bias=use_bias, norm=lateral_norm
                 )
@@ -102,7 +102,7 @@ class FPN(Backbone):
         self.upsampling = {
             2: (2, 2),
             3: (1, 2, 2)
-        }[image_dim]
+        }[channel_dims]
         
         # Place convs into top-down order (from low to high resolution)
         # to make the top-down computation in forward clearer.
@@ -190,16 +190,16 @@ class LastLevelMaxPool(nn.Module):
     P6 feature from P5.
     """
 
-    def __init__(self, image_dim):
+    def __init__(self, channel_dims):
         super().__init__()
         self.num_levels = 1
         self.in_feature = "p5"
-        self._image_dim = image_dim
+        self._channel_dims = channel_dims
 
     def forward(self, x):
-        if self._image_dim == 2:
+        if self._channel_dims == 2:
             x = F.max_pool2d(x, kernel_size=1, stride=2, padding=0)
-        elif self._image_dim == 3:
+        elif self._channel_dims == 3:
             x = F.max_pool3d(x, kernel_size=1, stride=(1, 2, 2), padding=0)
         return [x]
 
@@ -210,22 +210,28 @@ class LastLevelP6P7(nn.Module):
     C5 feature.
     """
 
-    def __init__(self, image_dim, in_channels, out_channels, in_feature="res5"):
+    def __init__(self, channel_dims, in_channels, out_channels, in_feature="res5", *, inter_slice=True):
         super().__init__()
         self.num_levels = 2
         self.in_feature = in_feature
-        if image_dim == 2:
+
+        if channel_dims == 2:
             self.p6 = nn.Conv2d(in_channels, out_channels, 3, 2, 1)
             self.p7 = nn.Conv2d(out_channels, out_channels, 3, 2, 1)
-        elif image_dim == 3:
-            self.p6 = nn.Sequential(
-                nn.Conv3d(in_channels, out_channels, (1, 3, 3), (1, 2, 2), (0, 1, 1)),
-                nn.Conv3d(out_channels, out_channels, (3, 1, 1), (1, 1, 1), (1, 0, 0))
-            )
-            self.p7 = nn.Sequential(
-                nn.Conv3d(out_channels, out_channels, (1, 3, 3), (1, 2, 2), (0, 1, 1)),
-                nn.Conv3d(out_channels, out_channels, (3, 1, 1), (1, 1, 1), (1, 0, 0))
-            )
+        elif channel_dims == 3:
+            if inter_slice:
+                self.p6 = nn.Sequential(
+                    nn.Conv3d(in_channels, out_channels, (1, 3, 3), (1, 2, 2), (0, 1, 1)),
+                    nn.Conv3d(out_channels, out_channels, (3, 1, 1), (1, 1, 1), (1, 0, 0))
+                )
+                self.p7 = nn.Sequential(
+                    nn.Conv3d(out_channels, out_channels, (1, 3, 3), (1, 2, 2), (0, 1, 1)),
+                    nn.Conv3d(out_channels, out_channels, (3, 1, 1), (1, 1, 1), (1, 0, 0))
+                )
+            else:
+                self.p6 = nn.Conv3d(in_channels, out_channels, (1, 3, 3), (1, 2, 2), (0, 1, 1))
+                self.p7 = nn.Conv3d(in_channels, out_channels, (1, 3, 3), (1, 2, 2), (0, 1, 1))
+
         for module in [self.p6, self.p7]:
             init_module(module, weight_init.c2_xavier_fill)
 
@@ -244,17 +250,17 @@ def build_resnet_fpn_backbone(cfg, input_shape: ShapeSpec):
     Returns:
         backbone (Backbone): backbone module, must be a subclass of :class:`Backbone`.
     """
-    image_dim = cfg.MODEL.BACKBONE.IMAGE_DIM
+    channel_dims = cfg.MODEL.BACKBONE.DIM
     bottom_up = build_resnet_backbone(cfg, input_shape)
     in_features = cfg.MODEL.FPN.IN_FEATURES
     out_channels = cfg.MODEL.FPN.OUT_CHANNELS
     backbone = FPN(
-        image_dim=image_dim,
+        channel_dims=channel_dims,
         bottom_up=bottom_up,
         in_features=in_features,
         out_channels=out_channels,
         norm=cfg.MODEL.FPN.NORM,
-        top_block=LastLevelMaxPool(image_dim),
+        top_block=LastLevelMaxPool(channel_dims),
         fuse_type=cfg.MODEL.FPN.FUSE_TYPE,
     )
     return backbone
@@ -269,18 +275,20 @@ def build_retinanet_resnet_fpn_backbone(cfg, input_shape: ShapeSpec):
     Returns:
         backbone (Backbone): backbone module, must be a subclass of :class:`Backbone`.
     """
-    image_dim = cfg.MODEL.BACKBONE.IMAGE_DIM
+    channel_dims = cfg.MODEL.BACKBONE.DIM
     bottom_up = build_resnet_backbone(cfg, input_shape)
     in_features = cfg.MODEL.FPN.IN_FEATURES
     out_channels = cfg.MODEL.FPN.OUT_CHANNELS
     in_channels_p6p7 = bottom_up.output_shape()["res5"].channels
+    inter_slice = cfg.MODEL.BACKBONE.INTER_SLICE
+
     backbone = FPN(
-        image_dim=image_dim,
+        channel_dims=channel_dims,
         bottom_up=bottom_up,
         in_features=in_features,
         out_channels=out_channels,
         norm=cfg.MODEL.FPN.NORM,
-        top_block=LastLevelP6P7(image_dim, in_channels_p6p7, out_channels),
+        top_block=LastLevelP6P7(channel_dims, in_channels_p6p7, out_channels, inter_slice=inter_slice),
         fuse_type=cfg.MODEL.FPN.FUSE_TYPE,
     )
     return backbone

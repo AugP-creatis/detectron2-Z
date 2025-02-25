@@ -49,11 +49,11 @@ class FrozenBatchNorm(nn.Module):
             scale = self.weight * (self.running_var + self.eps).rsqrt()
             bias = self.bias - self.running_mean * scale
 
-            image_dim = x.dim() - 2
+            channel_dims = x.dim() - 2
             shape = {
                 2: (1, -1, 1, 1),
                 3: (1, -1, 1, 1, 1),
-            }[image_dim]
+            }[channel_dims]
             scale = scale.reshape(shape)
             bias = bias.reshape(shape)
 
@@ -131,7 +131,7 @@ class FrozenBatchNorm(nn.Module):
         return res
 
 
-def get_norm(norm, out_channels):
+def get_norm(norm, out_channels, momentum=0.1):
     """
     Args:
         norm (str or callable): either one of BN, SyncBN, FrozenBN, GN;
@@ -144,6 +144,15 @@ def get_norm(norm, out_channels):
     if isinstance(norm, str):
         if len(norm) == 0:
             return None
+        
+        #Backward compatibility
+        if norm == "BN":
+            norm = "BN2d"
+        elif norm == "SyncBN":
+            norm = "SyncBN2d"
+        elif norm == "naiveSyncBN":
+            norm = "naiveSyncBN2d"
+
         norm = {
             "BN2d": BatchNorm2d,
             "BN3d": BatchNorm3d,
@@ -157,7 +166,11 @@ def get_norm(norm, out_channels):
             "naiveSyncBN2d": NaiveSyncBatchNorm2d,
             "naiveSyncBN3d": NaiveSyncBatchNorm3d,
         }[norm]
-    return norm(out_channels)
+
+    if isinstance(norm, FrozenBatchNorm):
+        return norm(out_channels)
+    else:
+        return norm(out_channels, momentum=momentum)
 
 
 class AllReduce(Function):

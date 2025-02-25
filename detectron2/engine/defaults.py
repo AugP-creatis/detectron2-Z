@@ -16,6 +16,7 @@ import sys
 from collections import OrderedDict
 import torch
 from fvcore.common.file_io import PathManager
+from fvcore.nn.parameter_count import parameter_count_table
 from fvcore.nn.precise_bn import get_bn_modules
 from torch.nn.parallel import DistributedDataParallel
 
@@ -179,7 +180,7 @@ class DefaultPredictor:
 
     def __init__(self, cfg):
         self.cfg = cfg.clone()  # cfg can be modified by model
-        self._is_stack = cfg.DATALOADER.IS_STACK
+        self._is_stack = cfg.INPUT.IS_STACK
         self.model = build_model(self.cfg)
         self.model.eval()
         self.metadata = MetadataCatalog.get(cfg.DATASETS.TEST[0])
@@ -439,6 +440,7 @@ class DefaultTrainer(SimpleTrainer):
         model = build_model(cfg)
         logger = logging.getLogger(__name__)
         logger.info("Model:\n{}".format(model))
+        logger.info("Parameter count:\n{}".format(parameter_count_table(model)))
         return model
 
     @classmethod
@@ -512,6 +514,10 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
             dict: a dict of result metrics
         """
         logger = logging.getLogger(__name__)
+
+        if cfg.OUTPUT.GATHER_STACK_RESULTS:
+            assert cfg.OUTPUT.FILTER_DUPLICATES, "OUTPUT.FILTER_DUPLICATES should be True if OUTPUT.GATHER_STACK_RESULTS is True"
+
         if isinstance(evaluators, DatasetEvaluator):
             evaluators = [evaluators]
         if evaluators is not None:
@@ -536,7 +542,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
                     )
                     results[dataset_name] = {}
                     continue
-            results_i = inference_on_dataset(model, cfg.MODEL.USE_AMP, data_loader, cfg.DATALOADER.IS_STACK, evaluator, cfg.OUTPUT.FILTER_DUPLICATES)
+            results_i = inference_on_dataset(model, cfg.MODEL.USE_AMP, data_loader, cfg.INPUT.IS_STACK, evaluator, cfg.OUTPUT.GATHER_STACK_RESULTS)
             results[dataset_name] = results_i
             if comm.is_main_process():
                 assert isinstance(
