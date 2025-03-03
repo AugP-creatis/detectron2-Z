@@ -107,6 +107,10 @@ _C.OUTPUT.FILTER_DUPLICATES = False
 # Gather in the same object (stack) the instances from multiple images/slices
 # OUTPUT.FILTER_DUPLICATES should be True if OUTPUT.GATHER_STACK_RESULTS is True
 _C.OUTPUT.GATHER_STACK_RESULTS = False
+# In inference, output an image file for the predicted masks + original image
+_C.OUTPUT.IMAGE_FILE = True
+# In inference, output an .nrrd file for the predicted masks, readable by 3D Slicer
+_C.OUTPUT.NRRD_FILE = True
 
 # -----------------------------------------------------------------------------
 # Dataset
