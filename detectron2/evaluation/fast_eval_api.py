@@ -117,3 +117,55 @@ class COCOeval_opt(COCOeval):
         self.eval["scores"] = np.array(self.eval["scores"]).reshape(self.eval["counts"])
         toc = time.time()
         print("COCOeval_opt.accumulate() finished in {:0.2f} seconds.".format(toc - tic))
+
+
+class COCOwithIOUeval(COCOeval_opt):
+
+    def __init__(self, cocoGt=None, cocoDt=None, iouType="segm", iou_metric_th=0.6):
+        super().__init__(cocoGt, cocoDt, iouType)
+        self._iou_metric_th = iou_metric_th
+
+    def evaluate(self):
+        super().evaluate()
+        
+        p = self.params
+        catIds = p.catIds if p.useCats else [-1]
+        self._matched_ious = [[] for catId in catIds]
+
+        for catId in catIds:
+            for imgId in p.imgIds:
+                ious = self.ious[imgId, catId]
+                if len(ious) != 0:
+                    matches = ious > self._iou_metric_th
+                    for gt_idx in range(ious.shape[1]):
+                        max_score = 0
+                        for dt_idx in range(ious.shape[0]):
+                            if matches[dt_idx, gt_idx]:
+                                dt_score = self._dts[imgId, catId][dt_idx]["score"]
+                                if dt_score > max_score:
+                                    max_score = dt_score
+                                    max_score_iou = ious[dt_idx, gt_idx]
+
+                        self._matched_ious[catId].append(max_score_iou)
+
+    def accumulate(self):
+        super().accumulate()
+        self.eval["iou"] = np.array([
+            sum(ious)/len(ious) if ious else -1
+            for ious in self._matched_ious
+        ])
+
+    def summarize(self):
+        super().summarize()
+
+        new_metrics = ("iou", )
+
+        self.new_stats = np.zeros((len(new_metrics),))   #inpired by pycocotools COCOeval summarize
+        for i, metric in enumerate(new_metrics):
+            if metric == "iou":
+                s = self.eval["iou"]
+            if len(s[s>-1]) == 0:
+                mean_s = -1
+            else:
+                mean_s = np.mean(s[s>-1])
+            self.new_stats[i] = mean_s

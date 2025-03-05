@@ -18,7 +18,7 @@ from tabulate import tabulate
 import detectron2.utils.comm as comm
 from detectron2.data import MetadataCatalog
 from detectron2.data.datasets.coco import convert_to_coco_json
-from detectron2.evaluation.fast_eval_api import COCOeval_opt as COCOeval
+from detectron2.evaluation.fast_eval_api import COCOeval_opt, COCOwithIOUeval
 from detectron2.structures import Boxes, BoxMode, pairwise_iou
 from detectron2.utils.logger import create_small_table
 
@@ -59,6 +59,7 @@ class COCOEvaluator(DatasetEvaluator):
                    format.
         """
         self._tasks = self._tasks_from_config(cfg)
+        self._iou_metric_th = cfg.TEST.IOU_METRIC_TH
         self._distributed = distributed
         self._output_dir = output_dir
 
@@ -186,14 +187,21 @@ class COCOEvaluator(DatasetEvaluator):
         for task in sorted(tasks):
             coco_eval = (
                 _evaluate_predictions_on_coco(
-                    self._coco_api, coco_results, task, kpt_oks_sigmas=self._kpt_oks_sigmas
+                    self._coco_api,
+                    coco_results,
+                    task,
+                    iou_metric_th=self._iou_metric_th,
+                    kpt_oks_sigmas=self._kpt_oks_sigmas
                 )
                 if len(coco_results) > 0
                 else None  # cocoapi does not handle empty results very well
             )
 
             res = self._derive_coco_results(
-                coco_eval, task, class_names=self._metadata.get("thing_classes")
+                coco_eval,
+                task,
+                iou_metric = self._iou_metric_th != -1,
+                class_names=self._metadata.get("thing_classes")
             )
             self._results[task] = res
 
@@ -236,7 +244,7 @@ class COCOEvaluator(DatasetEvaluator):
         self._logger.info("Proposal metrics: \n" + create_small_table(res))
         self._results["box_proposals"] = res
 
-    def _derive_coco_results(self, coco_eval, iou_type, class_names=None):
+    def _derive_coco_results(self, coco_eval, iou_type, iou_metric=False, class_names=None):
         """
         Derive the desired score numbers from summarized COCOeval.
 
@@ -256,6 +264,10 @@ class COCOEvaluator(DatasetEvaluator):
             "keypoints": ["AP", "AP50", "AP75", "APm", "APl"],
         }[iou_type]
 
+        new_metrics = []
+        if iou_metric:
+            new_metrics.append("IoU")
+
         if coco_eval is None:
             self._logger.warn("No predictions from the model!")
             return {metric: float("nan") for metric in metrics}
@@ -265,6 +277,15 @@ class COCOEvaluator(DatasetEvaluator):
             metric: float(coco_eval.stats[idx] * 100 if coco_eval.stats[idx] >= 0 else "nan")
             for idx, metric in enumerate(metrics)
         }
+
+        if new_metrics:
+            results.update(
+                {
+                    metric: float(coco_eval.new_stats[idx] * 100 if coco_eval.new_stats[idx] >= 0 else "nan")
+                    for idx, metric in enumerate(new_metrics)
+                }
+            )
+
         self._logger.info(
             "Evaluation results for {}: \n".format(iou_type) + create_small_table(results)
         )
@@ -273,11 +294,15 @@ class COCOEvaluator(DatasetEvaluator):
 
         if class_names is None or len(class_names) <= 1:
             return results
-        # Compute per-category AP
+        # Compute per-category AP and IoU
         # from https://github.com/facebookresearch/Detectron/blob/a6a835f5b8208c45d0dce217ce9bbda915f44df7/detectron/datasets/json_dataset_evaluator.py#L222-L252 # noqa
         precisions = coco_eval.eval["precision"]
+        if iou_metric:
+            ious = coco_eval.eval["iou"]
         # precision has dims (iou, recall, cls, area range, max dets)
         assert len(class_names) == precisions.shape[2]
+        if iou_metric:
+            assert len(class_names) == len(ious)
 
         results_per_category = []
         for idx, name in enumerate(class_names):
@@ -286,22 +311,33 @@ class COCOEvaluator(DatasetEvaluator):
             precision = precisions[:, :, idx, 0, -1]
             precision = precision[precision > -1]
             ap = np.mean(precision) if precision.size else float("nan")
-            results_per_category.append(("{}".format(name), float(ap * 100)))
+            if not iou_metric:
+                results_per_category.append(("{}".format(name), float(ap * 100)))
+            else:
+                iou = ious[idx] if ious[idx] > -1 else float("nan")
+                results_per_category.append(("{}".format(name), float(ap * 100), float(iou * 100)))
 
         # tabulate it
-        N_COLS = min(6, len(results_per_category) * 2)
+        metrics_per_category = ["AP"]
+        if iou_metric:
+            metrics_per_category.append("IoU")
+        N_COLS = min(6, len(results_per_category) * (len(metrics_per_category)+1))
         results_flatten = list(itertools.chain(*results_per_category))
         results_2d = itertools.zip_longest(*[results_flatten[i::N_COLS] for i in range(N_COLS)])
         table = tabulate(
             results_2d,
             tablefmt="pipe",
             floatfmt=".3f",
-            headers=["category", "AP"] * (N_COLS // 2),
+            headers=(["category"]+metrics_per_category) * (N_COLS // (len(metrics_per_category)+1)),
             numalign="left",
         )
-        self._logger.info("Per-category {} AP: \n".format(iou_type) + table)
+        self._logger.info("Per-category {} metrics: \n".format(iou_type) + table)
 
-        results.update({"AP-" + name: ap for name, ap in results_per_category})
+        if not iou_metric:
+            results.update({"AP-" + name: ap for name, ap in results_per_category})
+        else:
+            for name, ap, iou in results_per_category:
+                results.update({"AP-"+name: ap, "IoU-"+name: iou})
         return results
 
 
@@ -480,7 +516,7 @@ def _evaluate_box_proposals(dataset_predictions, coco_api, thresholds=None, area
     }
 
 
-def _evaluate_predictions_on_coco(coco_gt, coco_results, iou_type, kpt_oks_sigmas=None):
+def _evaluate_predictions_on_coco(coco_gt, coco_results, iou_type, iou_metric_th=-1, kpt_oks_sigmas=None):
     """
     Evaluate the coco results using COCOEval API.
     """
@@ -496,7 +532,11 @@ def _evaluate_predictions_on_coco(coco_gt, coco_results, iou_type, kpt_oks_sigma
             c.pop("bbox", None)
 
     coco_dt = coco_gt.loadRes(coco_results)
-    coco_eval = COCOeval(coco_gt, coco_dt, iou_type)
+
+    if iou_metric_th == -1:
+        coco_eval = COCOeval_opt(coco_gt, coco_dt, iou_type)
+    else:
+        coco_eval = COCOwithIOUeval(coco_gt, coco_dt, iou_type, iou_metric_th)
 
     if iou_type == "keypoints":
         # Use the COCO default keypoint OKS sigmas unless overrides are specified
