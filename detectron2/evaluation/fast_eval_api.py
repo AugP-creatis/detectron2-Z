@@ -138,6 +138,7 @@ class COCOwithIOUeval(COCOeval_opt):
                 if len(ious) != 0:
                     matches = ious > self._iou_metric_th
                     for gt_idx in range(ious.shape[1]):
+                        max_score_iou = None
                         max_score = 0
                         for dt_idx in range(ious.shape[0]):
                             if matches[dt_idx, gt_idx]:
@@ -146,7 +147,8 @@ class COCOwithIOUeval(COCOeval_opt):
                                     max_score = dt_score
                                     max_score_iou = ious[dt_idx, gt_idx]
 
-                        self._matched_ious[catId].append(max_score_iou)
+                        if max_score_iou != None:
+                            self._matched_ious[catId].append(max_score_iou)
 
     def accumulate(self):
         super().accumulate()
