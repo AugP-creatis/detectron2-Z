@@ -167,7 +167,7 @@ def get_norm(norm, out_channels, momentum=0.1):
             "naiveSyncBN3d": NaiveSyncBatchNorm3d,
         }[norm]
 
-    if isinstance(norm, FrozenBatchNorm):
+    if norm == FrozenBatchNorm or norm == nn.GroupNorm:
         return norm(out_channels)
     else:
         return norm(out_channels, momentum=momentum)
