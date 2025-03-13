@@ -96,6 +96,7 @@ _C.INPUT.IS_STACK = False
 _C.INPUT.STACK_SIZE = 11
 _C.INPUT.EXTENSION = ".png"
 _C.INPUT.SLICE_SEPARATOR = "F"
+_C.INPUT.EXCLUDED_PATH_SUBSTRINGS = ()  # In inference, will exclude directory paths with one of the substrings
 
 # -----------------------------------------------------------------------------
 # OUTPUT
@@ -602,9 +603,9 @@ _C.SOLVER.CLIP_GRADIENTS.NORM_TYPE = 2.0
 # Specific test options
 # ---------------------------------------------------------------------------- #
 _C.TEST = CN()
-# If not -1, will measure IoU performance of the predictions using the value as the matching threshold
+# If not -1.0, will measure IoU performance of the predictions using the value as the matching threshold
 # Currently only implemented for COCO evaluator
-_C.TEST.IOU_METRIC_TH = -1
+_C.TEST.IOU_METRIC_TH = -1.0
 # For end-to-end tests to verify the expected accuracy.
 # Each item is [task, metric, value, tolerance]
 # e.g.: [['bbox', 'AP', 38.5, 0.2]]

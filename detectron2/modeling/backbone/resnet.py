@@ -58,7 +58,7 @@ class BasicBlock(CNNBlockBase):
     with two 3x3 conv layers and a projection shortcut if needed.
     """
 
-    def __init__(self, conv_type, in_channels, out_channels, kernel_size, *, stride=1, norm="BN2d", inter_slice=True):
+    def __init__(self, conv_type, in_channels, out_channels, kernel_size, *, stride=1, norm="BN", inter_slice=True):
         """
         Args:
             conv_type (Conv): member of the Conv Enum
@@ -151,7 +151,7 @@ class VeryBasicBlock(CNNBlockBase):
     with two 3x3 conv layers and a projection shortcut if needed.
     """
 
-    def __init__(self, conv_type, in_channels, out_channels, kernel_size, *, stride=1, norm="BN2d", inter_slice=True):
+    def __init__(self, conv_type, in_channels, out_channels, kernel_size, *, stride=1, norm="BN", inter_slice=True):
         """
         Args:
             conv_type (Conv): member of the Conv Enum
@@ -184,7 +184,7 @@ class VeryBasicBlock(CNNBlockBase):
                 kernel_size = args_2d["kernel_size"]
                 padding = args_2d["padding"]
 
-        self.shortcut = in_channels == out_channels
+        self.shortcut = in_channels == out_channels and stride == 1
 
         self.conv1 = ConvSize3(
             in_channels,
@@ -225,7 +225,7 @@ class BottleneckBlock(CNNBlockBase):
         bottleneck_channels,
         stride=1,
         num_groups=1,
-        norm="BN2d",
+        norm="BN",
         stride_in_1x1=False,
         dilation=1,
         inter_slice=True
@@ -364,7 +364,7 @@ class DeformBottleneckBlock(CNNBlockBase):  #Not modified yet for 3d
         bottleneck_channels,
         stride=1,
         num_groups=1,
-        norm="BN2d",
+        norm="BN",
         stride_in_1x1=False,
         dilation=1,
         deform_modulated=False,
@@ -472,7 +472,7 @@ class BasicStem(CNNBlockBase):
     The standard ResNet stem (layers before the first residual block).
     """
 
-    def __init__(self, channel_dims, in_channels=3, out_channels=64, norm="BN2d"):
+    def __init__(self, channel_dims, in_channels=3, out_channels=64, norm="BN"):
         """
         Args:
             norm (str or callable): norm after the first conv layer.
@@ -519,7 +519,7 @@ class TwoConvStem(CNNBlockBase):
     The standard ResNet stem (layers before the first residual block).
     """
 
-    def __init__(self, channel_dims, in_channels=3, out_channels=64, norm="BN2d"):
+    def __init__(self, channel_dims, in_channels=3, out_channels=64, norm="BN"):
         """
         Args:
             norm (str or callable): norm after the first conv layer.
@@ -532,15 +532,15 @@ class TwoConvStem(CNNBlockBase):
         if self._channel_dims == 2:
             self.conv1 = Conv2d(
                 in_channels,
-                2*out_channels,
+                out_channels,
                 kernel_size=5,
                 stride=2,
                 padding=2,
                 bias=False,
-                norm=get_norm(norm, 2*out_channels),
+                norm=get_norm(norm, out_channels),
             )
             self.conv2 = Conv2d(
-                2*out_channels,
+                out_channels,
                 out_channels,
                 kernel_size=3,
                 stride=1,
@@ -552,15 +552,15 @@ class TwoConvStem(CNNBlockBase):
         elif self._channel_dims == 3:
             self.conv1 = Conv3d(
                 in_channels,
-                2*out_channels,
+                out_channels,
                 kernel_size=(1, 5, 5),
                 stride=(1, 2, 2),
                 padding=(0, 2, 2),
                 bias=False,
-                norm=get_norm(norm, 2*out_channels),
+                norm=get_norm(norm, out_channels),
             )
             self.conv2 = Conv3d(
-                2*out_channels,
+                out_channels,
                 out_channels,
                 kernel_size=(1, 3, 3),
                 stride=1,
@@ -782,7 +782,7 @@ def build_resnet_backbone(cfg, input_shape):
         downsampling = (2, 2)
     elif channel_dims == 3 :
         conv_type_per_stage = [Conv.CONV_3D, Conv.CONV_P3D, Conv.CONV_P3D, Conv.CONV_P3D]
-        kernel_size_per_stage = [3, 3, 3, 3]
+        kernel_size_per_stage = [(1, 3, 3), 3, 3, 3]
         downsampling = (1, 2, 2)
 
     # need registration of new blocks/stems?
@@ -875,7 +875,8 @@ def build_resnet_backbone(cfg, input_shape):
                 stage_kargs["block_class"] = BottleneckBlock
         blocks = ResNet.make_stage(**stage_kargs)
         in_channels = out_channels
-        out_channels *= 2
+        if not depth == 11:
+            out_channels *= 2
         bottleneck_channels *= 2
         stages.append(blocks)
     return ResNet(channel_dims, stem, stages, out_features=out_features).freeze(freeze_at)

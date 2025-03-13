@@ -144,26 +144,18 @@ def get_norm(norm, out_channels, momentum=0.1):
     if isinstance(norm, str):
         if len(norm) == 0:
             return None
-        
-        #Backward compatibility
-        if norm == "BN":
-            norm = "BN2d"
-        elif norm == "SyncBN":
-            norm = "SyncBN2d"
-        elif norm == "naiveSyncBN":
-            norm = "naiveSyncBN2d"
 
         norm = {
-            "BN2d": BatchNorm2d,
+            "BN": BatchNorm2d,
             "BN3d": BatchNorm3d,
             # Fixed in https://github.com/pytorch/pytorch/pull/36382
-            "SyncBN2d": NaiveSyncBatchNorm2d if env.TORCH_VERSION <= (1, 5) else nn.SyncBatchNorm,
+            "SyncBN": NaiveSyncBatchNorm2d if env.TORCH_VERSION <= (1, 5) else nn.SyncBatchNorm,
             "SyncBN3d": NaiveSyncBatchNorm3d if env.TORCH_VERSION <= (1, 5) else nn.SyncBatchNorm,
             "FrozenBN": FrozenBatchNorm,
             "GN": lambda channels: nn.GroupNorm(32, channels),
             # for debugging:
             "nnSyncBN": nn.SyncBatchNorm,
-            "naiveSyncBN2d": NaiveSyncBatchNorm2d,
+            "naiveSyncBN": NaiveSyncBatchNorm2d,
             "naiveSyncBN3d": NaiveSyncBatchNorm3d,
         }[norm]
 

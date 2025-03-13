@@ -381,7 +381,12 @@ def convert_to_coco_dict(dataset_name, cfg):
     coco_annotations = []
 
     if cfg.OUTPUT.GATHER_STACK_RESULTS:
-        dataset_dicts = gather_stack_dicts(dataset_dicts, cfg.INPUT.STACK_SIZE, cfg.INPUT.EXTENSION, cfg.INPUT.SLICE_SEPARATOR)
+        dataset_dicts = gather_stack_dicts(
+            dataset_dicts,
+            stack_size=cfg.INPUT.STACK_SIZE,
+            ext=cfg.INPUT.EXTENSION,
+            sep=cfg.INPUT.SLICE_SEPARATOR
+        )
 
         for stack_id, stack_dicts in enumerate(dataset_dicts):
             coco_image = {

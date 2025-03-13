@@ -60,7 +60,7 @@ class MapDataset(data.Dataset):
                 )
 
 
-def gather_stack_dicts(lst: list, stack_size: int = 11, ext: str = ".png", sep: str = "F"):
+def gather_stack_dicts(lst: list, *, stack_size: int, ext: str, sep: str):
 
     stacks_dict = {basename(lst[0]['file_name']).split(sep, 1)[0] : [lst[0]]}
     nb_img = len(lst)
@@ -72,30 +72,33 @@ def gather_stack_dicts(lst: list, stack_size: int = 11, ext: str = ".png", sep: 
             stacks_dict[i_stack] = [lst[i]]
 
         if len(stacks_dict[i_stack]) == stack_size:
-            stacks_dict[i_stack] = natsorted(stacks_dict[i_stack], key = lambda d : basename(d['file_name'])[:-len(ext)])
+            stacks_dict[i_stack] = natsorted(
+                stacks_dict[i_stack],
+                key = lambda d : basename(d['file_name'])
+            )
 
     # Create the list of the stacked dictionaries & verify if it is well constructed
     logger = logging.getLogger(__name__)
 
-    z_lst = list(stacks_dict.values())
-    nb_stacks = len(z_lst)
+    stack_lst = list(stacks_dict.values())
+    nb_stacks = len(stack_lst)
     logger.info("Number of stacks: {}".format(nb_stacks))
     cnt_img = 0
     cnt_too_big = 0
     cnt_too_small = 0
 
     for s in range(nb_stacks):
-        cnt_img += len(z_lst[s])
-        if len(z_lst[s]) == stack_size:
+        cnt_img += len(stack_lst[s])
+        if len(stack_lst[s]) == stack_size:
             stack_sorted = True
             for z in range(stack_size):
-                if basename(z_lst[s][z]['file_name']).split(sep, 1)[1][:-len(ext)] != str(z):
+                if int(basename(stack_lst[s][z]['file_name']).split(sep, 1)[1][:-len(ext)]) != z:
                     stack_sorted = False
             if not stack_sorted:
-                logger.warning("Stack {} is not sorted ({})".format(s, basename(z_lst[s][0]['file_name']).split(sep, 1)[0]))
-        elif len(z_lst[s]) > stack_size:
+                logger.warning("Stack {} is not sorted ({})".format(s, basename(stack_lst[s][0]['file_name']).split(sep, 1)[0]))
+        elif len(stack_lst[s]) > stack_size:
             cnt_too_big += 1
-        elif len(z_lst[s]) < stack_size:
+        elif len(stack_lst[s]) < stack_size:
             cnt_too_small +=1
             
     if cnt_img != nb_img:
@@ -107,7 +110,7 @@ def gather_stack_dicts(lst: list, stack_size: int = 11, ext: str = ".png", sep: 
     assert cnt_too_small == 0, "{} stacks have a smaller size than expected ({})".format(cnt_too_small, stack_size)
     logger.info("All stacks have {} images".format(stack_size))
 
-    return z_lst
+    return stack_lst
     
 
 class DatasetFromList(data.Dataset):
@@ -133,7 +136,12 @@ class DatasetFromList(data.Dataset):
                 process instead of making a copy.
         """
         if cfg.INPUT.IS_STACK:
-            self._lst = gather_stack_dicts(lst, cfg.INPUT.STACK_SIZE, cfg.INPUT.EXTENSION, cfg.INPUT.SLICE_SEPARATOR)
+            self._lst = gather_stack_dicts(
+                lst,
+                stack_size=cfg.INPUT.STACK_SIZE,
+                ext=cfg.INPUT.EXTENSION,
+                sep=cfg.INPUT.SLICE_SEPARATOR
+            )
         else:
             self._lst = lst
         self._copy = copy
